@@ -1,0 +1,10 @@
+Package: MaMaMIA
+Title: Max Mapping for Meticulous Introgression Analysis
+Version: 0.0.0.9000
+Authors@R: 
+    person("Aleksey", "Ermolaev", , "alerm@al-erm.ru", role = c("aut", "cre"))
+Description: The MaMaMIA provides a workflow for rapid Genotyping-by-Sequencing (GBS) analysis, enabling automated introgression detection. It integrates GC‑bias correction, pairwise chromosome comparison, and coverage depth profile segmentation to identify introgressed segments.
+License: GPL (>= 3)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.0.0

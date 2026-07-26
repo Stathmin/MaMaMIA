@@ -53,3 +53,5 @@ rsconnect/
 renv.lock
 .Rprofile
 renv/
+
+.Rbuildignore

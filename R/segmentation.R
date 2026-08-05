@@ -265,11 +265,6 @@ plot.ISA <- function(x,
             breaks = breaks$pos,
             labels = paste(breaks$chr_name.don, breaks$chr_name.rec, sep = "/")
         ) +
-        ggplot2::scale_y_continuous(
-            expand = ggplot2::expansion(mult = c(0.03, 0.03)),
-            labels = \(x) gsub("-", "", x),
-            name = "Coverage"
-        ) +
         ggplot2::theme(
             aspect.ratio = 1 / 5,
             axis.title.x = ggplot2::element_blank(),
@@ -281,6 +276,9 @@ plot.ISA <- function(x,
     if (plot_type == "mirror") {
         don_offset <- round(max(x$out$cor.gc.don, na.rm = TRUE) * 0.1)
         rec_offset <- round(max(x$out$cor.gc.rec, na.rm = TRUE) * 0.1)
+        max_y <- max(c(x$out$cor.gc.don + don_offset,
+                       x$out$cor.gc.rec + rec_offset))
+        
         plot + ggplot2::geom_point(
             mapping = ggplot2::aes(
                 x = .data$iid.e2e,
@@ -299,8 +297,15 @@ plot.ISA <- function(x,
                 ),
                 size = 0.5
             ) +
-            ggplot2::scale_color_manual(values = c("grey80", "grey60"))
+            ggplot2::scale_color_manual(values = c("grey80", "grey60")) +
+            ggplot2::scale_y_continuous(
+                expand = ggplot2::expansion(mult = c(0.03, 0.03)),
+                labels = \(x) gsub("-", "", x),
+                name = "Coverage",
+                limits = c(-max_y, max_y)
+            )
     } else {
+        max_y <- max(abs(x$out$diff))
         plot +
             ggplot2::geom_point(
                 mapping = ggplot2::aes(
@@ -327,7 +332,13 @@ plot.ISA <- function(x,
                 color = "orangered",
                 linewidth = 1
             ) +
-            ggplot2::scale_color_manual(values = c("grey60", "grey80"))
+            ggplot2::scale_color_manual(values = c("grey60", "grey80")) + 
+            ggplot2::scale_y_continuous(
+                expand = ggplot2::expansion(mult = c(0.03, 0.03)),
+                labels = \(x) gsub("-", "", x),
+                name = "Coverage",
+                limits = c(-max_y, max_y)
+            )
     }
 }
 

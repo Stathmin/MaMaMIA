@@ -55,3 +55,7 @@ renv.lock
 renv/
 
 .Rbuildignore
+.ipynb_checkpoints
+inst/doc
+/doc/
+/Meta/

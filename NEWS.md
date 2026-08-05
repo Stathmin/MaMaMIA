@@ -1,3 +1,3 @@
-# MaMaMIA (development version)
+# MaMaMIA 0.99.0
 
-Initial version
+* Initial submission.

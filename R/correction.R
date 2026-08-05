@@ -1,58 +1,63 @@
+#' @export
+#' @importFrom rlang .data
 RCA <- function(dcov, dgc, rcov, rgc, meta, presorted = TRUE) {
-    # RCA - Read Count Array
-    
-    # Same dims
-    stopifnot("dcov and dgc has different number of columns and row" = dim(dcov) == dim(dgc))
-    stopifnot("rcov and rgc has different number of columns and row" = dim(rcov) == dim(rgc))
-    
-    # Check if 4 columns are presented
-    stopifnot("Coverage data must contain exactly 4 columns" = ncol(dcov) == 4)
-    stopifnot("GC data must contain exactly 4 columns" = ncol(dgc) == 4)
-    
-    dcov <- `colnames<-`(dcov, c('chr_id', 'start', 'stop', 'cov'))
-    rcov <- `colnames<-`(rcov, c('chr_id', 'start', 'stop', 'cov'))
-    dgc <- `colnames<-`(dgc, c('chr_id', 'start', 'stop', 'gc'))
-    rgc <- `colnames<-`(rgc, c('chr_id', 'start', 'stop', 'gc'))
+    dcov <- as_window_df(dcov, "cov", "dcov")
+    dgc  <- as_window_df(dgc, "gc", "dgc")
+    rcov <- as_window_df(rcov, "cov", "rcov")
+    rgc  <- as_window_df(rgc, "gc", "rgc")
     
     if (!presorted) {
-        message('Sotring...')
-        dcov <- dplyr::arrange(dcov, chr_id, start, stop)
-        rcov <- dplyr::arrange(rcov, chr_id, start, stop)
-        dgc <- dplyr::arrange(dgc, chr_id, start, stop)
-        rgc <- dplyr::arrange(rgc, chr_id, start, stop)
+        message("Sorting...")
+        dcov <- dplyr::arrange(dcov, dplyr::across(c("chr_id", "start", "stop")))
+        rcov <- dplyr::arrange(rcov, dplyr::across(c("chr_id", "start", "stop")))
+        dgc <- dplyr::arrange(dgc, dplyr::across(c("chr_id", "start", "stop")))
+        rgc <- dplyr::arrange(rgc, dplyr::across(c("chr_id", "start", "stop")))
     }
     
-    # Same chromosomes
-    stopifnot("Chromosome IDs are not matching in donor coverage and GC data" = all(dcov[, 1] == dgc[, 1]))
-    stopifnot("Chromosome IDs are not matching in recipient coverage and GC data" = all(rcov[, 1] == rgc[, 1]))
-    
-    # Same coordinates
-    stopifnot("Window coordinates are not matching in donor coverage and GC data" = all(dcov[, 2:3] == dgc[, 2:3]))
-    stopifnot("Window coordinates are not matching in donor coverage and GC data" = all(rcov[, 2:3] == rgc[, 2:3]))
+    validate_windows_tiled(dcov, "dcov")
+    validate_windows_tiled(dgc, "dgc")
+    validate_windows_tiled(rcov, "rcov")
+    validate_windows_tiled(rgc, "rgc")
     
     # Validate meta info
-    stopifnot("Metainfo must not contain NA" = sum(is.na(meta)) == 0)
-    stopifnot("Metainfo must contain exactly 3 columns" = ncol(meta) == 3)
-    stopifnot(
-        "Column names of meta do not match specification" =
-            colnames(meta) == c("chr_id", "chr_name", "subgenome")
-    )
-    stopifnot("Duplicated chromosomes in meta" = length(meta[['chr_id']]) == length(unique(meta[['chr_id']])))
+    meta <- as_meta_df(meta)
     
-    don_chr_ids <- unique(dcov$chr_id)
-    rec_chr_ids <- unique(rcov$chr_id)
+    don_chr_ids <- unique(dcov[['chr_id']])
+    rec_chr_ids <- unique(rcov[['chr_id']])
     stopifnot(
-        "Number of chromosomes in meta do not match sum of donor and recipient chromosomes" =
-            length(meta[['chr_id']]) == length(c(don_chr_ids, rec_chr_ids))
+        setequal(meta$chr_id, c(don_chr_ids, rec_chr_ids)),
+        length(intersect(don_chr_ids, rec_chr_ids)) == 0
     )
     
+    don_subgenomes <- unique(meta$subgenome[meta$chr_id %in% don_chr_ids])
+    rec_subgenomes <- unique(meta$subgenome[meta$chr_id %in% rec_chr_ids])
+    if (length(intersect(don_subgenomes, rec_subgenomes)) > 0L) {
+        stop(
+            paste0(
+                "Donor and recipient subgenome labels must be disjoint; shared: ",
+                paste(intersect(don_subgenomes, rec_subgenomes), collapse = ", ")
+            ),
+            call. = FALSE
+        )
+    }
     
-    don_data <- dplyr::inner_join(dcov, dgc, by = c('chr_id', 'start', 'stop'))
-    rec_data <- dplyr::inner_join(rcov, rgc, by = c('chr_id', 'start', 'stop'))
-    full_data <- dplyr::bind_rows(rec_data, don_data) |>
-        dplyr::full_join(meta, by = 'chr_id') |> 
-        dplyr::group_by(chr_id) |> 
-        dplyr::mutate(iid = dplyr::row_number(), .after = 'chr_id') |> 
+    don_data <- dplyr::inner_join(dcov, dgc, by = c("chr_id", "start", "stop"))
+    stopifnot(length(unique(c(
+        nrow(dcov), nrow(dgc), nrow(don_data)
+    ))) == 1)
+    
+    rec_data <- dplyr::inner_join(rcov, rgc, by = c("chr_id", "start", "stop"))
+    stopifnot(length(unique(c(
+        nrow(rcov), nrow(rgc), nrow(rec_data)
+    ))) == 1)
+    
+    full_data <- dplyr::bind_rows(rec_data, don_data)
+    validate_equal_n_windows(full_data$chr_id)
+    
+    full_data <- full_data |>
+        dplyr::left_join(meta, by = "chr_id") |>
+        dplyr::group_by(.data$chr_id) |>
+        dplyr::mutate(iid = dplyr::row_number(), .after = "chr_id") |>
         dplyr::ungroup()
     
     structure(list(
@@ -61,119 +66,267 @@ RCA <- function(dcov, dgc, rcov, rgc, meta, presorted = TRUE) {
             meta = meta,
             don_chr_ids = don_chr_ids,
             rec_chr_ids = rec_chr_ids
-        )
-    ), class = 'RCA')
+        ),
+        corrected = FALSE
+    ), class = "RCA")
 }
 
+#' @export
+#' @importFrom rlang .data
+correctReadCounts <- function(RCA,
+                              cores = 1L,
+                              verbose = TRUE) {
+    stopifnot("Input is not RCA object" = inherits(RCA, "RCA"))
 
-correct_read_counts <- function(RCA,
-                                cov_outlier = 0.01,
-                                gc_outlier = 0.01,
-                                verbose = TRUE) {
+    cov_outlier <- 0.01
+    gc_outlier <- 0.01
+    
+    cores <- check_cores(cores)
+    
     if (verbose) {
-        message('Applying filter on data...')
+        message("Applying filter on data...")
     }
     RCA$data <- RCA$data |>
-        dplyr::mutate(valid = (cov >= 0) & (gc > 0)) |>
-        dplyr::mutate(ideal = valid &
-                          (gc >= quantile(gc[valid], gc_outlier)) &
-                          (gc <= quantile(gc[valid], 1 - gc_outlier)) &
-                          (cov <= quantile(cov[valid], 1 - cov_outlier)))
+        dplyr::mutate(valid = (.data$cov >= 0) & (.data$gc > 0))
     
+    n_valid <- sum(RCA$data$valid, na.rm = TRUE)
+    if (n_valid < 2L) {
+        stop(
+            "Fewer than 2 valid windows; cannot estimate GC/coverage quantiles",
+            call. = FALSE
+        )
+    }
+    
+    gc_q <- stats::quantile(RCA$data$gc[RCA$data$valid], c(gc_outlier, 1 - gc_outlier))
+    cov_q <- stats::quantile(RCA$data$cov[RCA$data$valid], 1 - cov_outlier)
+    
+    RCA$data <- dplyr::mutate(
+        RCA$data,
+        ideal = .data$valid &
+            (.data$gc >= gc_q[1]) &
+            (.data$gc <= gc_q[2]) &
+            (.data$cov <= cov_q)
+    )
+    
+    n_ideal <- sum(RCA$data$ideal, na.rm = TRUE)
+    min_ideal <- 10L
+    if (n_ideal < min_ideal) {
+        stop(
+            sprintf(
+                paste0(
+                    "Fewer than %d ideal windows (%d); ",
+                    "cannot fit GC-bias smooth"
+                ),
+                min_ideal,
+                n_ideal
+            ),
+            call. = FALSE
+        )
+    }
     
     if (verbose) {
-        message('Correcting for GC bias...')
+        message(paste('Correcting for GC bias using', cores, 'cores...'))
     }
     fit <- glmmTMB::glmmTMB(
-        cov ~ s(gc + (1 | subgenome), k = 10),
-        ziformula = ~ s(gc + (1 | subgenome), k = 10),
+        cov ~ s(gc, k = 10) + subgenome,
+        ziformula = ~ s(gc, k = 10) + subgenome,
         family = glmmTMB::nbinom2(),
-        data = dplyr::filter(RCA$data, ideal),
-        REML = TRUE
+        data = dplyr::filter(RCA$data, .data$ideal),
+        REML = TRUE,
+        control = glmmTMB::glmmTMBControl(parallel = list(n = cores))
     )
     
-    mean_gc_ideal <- dplyr::filter(RCA$data, ideal) |>
-        dplyr::pull(gc) |>
-        mean()
+    gc_ref <- stats::median(RCA$data$gc[RCA$data$ideal], na.rm = TRUE)
+    predict_actual <- stats::predict(fit, newdata = RCA$data, type = "response")
+    predict_ref <- stats::predict(fit,
+                                  newdata = transform(RCA$data, gc = gc_ref),
+                                  type = "response")
+    RCA$data$cor.gc <- RCA$data$cov * (predict_ref / (predict_actual + 1e-8))
     
-    cor.gc <- predict(
-        object = fit,
-        newdata = transform(RCA$data, covariate = mean_gc_ideal),
-        type = 'response'
-    )
-    
-    RCA$data$cor.gc <- RCA$data$cov / cor.gc
     RCA$data$ideal <- RCA$data$ideal &
-        RCA$data$cor.gc < quantile(RCA$data$cor.gc,
-                                           probs = 1 - cov_outlier,
-                                           na.rm = TRUE)
+        RCA$data$cor.gc < stats::quantile(RCA$data$cor.gc,
+                                          probs = 1 - cov_outlier,
+                                          na.rm = TRUE)
+    
+    n_ideal_post <- sum(RCA$data$ideal, na.rm = TRUE)
+    if (n_ideal_post < 1L) {
+        stop(
+            "No ideal windows remain after GC-corrected coverage filtering",
+            call. = FALSE
+        )
+    }
+    
+    RCA$corrected <- TRUE
+    RCA$fit <- fit
+    RCA$outliers <- list(
+        gc_lower_bound = gc_q[1],
+        gc_upper_bound = gc_q[2],
+        cov_upper_bound = cov_q
+    )
+    
     return(RCA)
 }
 
-
-plot.RCA <- function(RCA,
-                     plot.type = c('orig_cov', 'corr_cov'),
+#' @exportS3Method base::plot
+#' @importFrom rlang .data
+plot.RCA <- function(x,
+                     plot.type = c("orig_cov", "corr_cov"),
                      show_outliers = FALSE,
                      ...) {
-    if (show_outliers == TRUE) {
-        plotting_df <- RCA$data
-    } else {
-        plotting_df <- dplyr::filter(RCA$data, ideal == TRUE)
-    }
-    plotting_df$color <- (match(plotting_df$chr_id, unique(plotting_df$chr_id)) - 1) %% 2
-    
     plot_type <- match.arg(plot.type)
     
-    breaks <- plotting_df |>
-        dplyr::mutate(rn = seq_along(chr_name)) |>
-        dplyr::group_by(chr_name) |>
-        dplyr::reframe(pos = min(rn) + (diff(range(rn)) / 2))
+    if (!x$corrected) {
+        warning('Correction of GC-bias was not performed. See correctReadCounts().')
+        warning('Fallback to original coverage with outliers')
+        plot_type <- 'orig_cov'
+        show_outliers <- TRUE
+    }
     
-    plot <- ggplot2::ggplot(plotting_df, ggplot2::aes(x = seq_along(chr_id), color = factor(color))) +
+    if (show_outliers == TRUE) {
+        plotting_df <- x$data
+    } else {
+        plotting_df <- dplyr::filter(x$data, .data$ideal == TRUE)
+    }
+    if (nrow(plotting_df) == 0L) {
+        stop(
+            "No windows available to plot (empty data after filtering)",
+            call. = FALSE
+        )
+    }
+    plotting_df$color <- (match(plotting_df$chr_id, unique(plotting_df$chr_id)) - 1) %% 2
+    plotting_df$x <- seq_len(nrow(plotting_df))
+    
+    breaks <- plotting_df |>
+        dplyr::mutate(rn = .data$x) |>
+        dplyr::group_by(.data$chr_name) |>
+        dplyr::reframe(pos = min(.data$rn) + (diff(range(.data$rn)) / 2))
+    
+    plot <- ggplot2::ggplot(plotting_df, ggplot2::aes(
+        x = .data$x,
+        color = factor(.data$color)
+    )) +
         ggplot2::theme_bw() +
         ggplot2::scale_x_continuous(
-            expand = ggplot2::expansion(),
+            expand = ggplot2::expansion(mult = c(0.01, 0.01)),
             breaks = breaks$pos,
             labels = breaks$chr_name
         ) +
-        ggplot2::scale_y_continuous(expand = ggplot2::expansion(add = c(0, 1))) +
+        ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.1)),
+                                    name = 'Coverage') +
         ggplot2::scale_color_manual(values = c("grey60", "grey80")) +
         ggplot2::theme(
             aspect.ratio = 1 / 5,
-            legend.position = 'none',
+            legend.position = "none",
             panel.grid = ggplot2::element_blank(),
             axis.title.x = ggplot2::element_blank(),
             axis.ticks.x = ggplot2::element_blank()
         )
     
-    if (plot_type == 'orig_cov') {
-        plot + ggplot2::geom_point(size = 0.5, mapping = ggplot2::aes(y = cov))
+    if (plot_type == "orig_cov") {
+        plot + ggplot2::geom_point(size = 0.5,
+                                   mapping = ggplot2::aes(y = .data$cov))
     } else {
-        plot + ggplot2::geom_point(size = 0.5, mapping = ggplot2::aes(y = cor.gc))
+        plot + ggplot2::geom_point(size = 0.5,
+                                   mapping = ggplot2::aes(y = .data$cor.gc))
     }
 }
 
-
-subset.RCA <- function(RCA,
+#' @exportS3Method base::subset
+subset.RCA <- function(x,
                        don_chromlist = NULL,
                        rec_chromlist = NULL,
                        don_subgenomes = NULL,
-                       rec_subgenomes = NULL) {
-    if (!is.null(don_subgenomes) | !is.null(rec_subgenomes)) {
-        target_don_chrs <- c(RCA$meta$meta$chr_id[RCA$meta$meta$subgenome %in% don_subgenomes], don_chromlist) |>
-            unique()
-        target_rec_chrs <- c(RCA$meta$meta$chr_id[RCA$meta$meta$subgenome %in% rec_subgenomes], rec_chromlist) |>
-            unique()
-    } else {
-        target_don_chrs <- unique(don_chromlist)
-        target_rec_chrs <- unique(rec_chromlist)
-    }
+                       rec_subgenomes = NULL,
+                       ...) {
+    target_chrs <- resolve_chr_targets(
+        x$meta$meta,
+        don_chromlist,
+        rec_chromlist,
+        don_subgenomes,
+        rec_subgenomes,
+        don_chr_ids = x$meta$don_chr_ids,
+        rec_chr_ids = x$meta$rec_chr_ids
+    )
     
-    RCA$data <- dplyr::filter(RCA$data, chr_id %in% c(target_don_chrs, target_rec_chrs))
-    RCA$meta$meta <- dplyr::filter(RCA$meta$meta,
-                                   chr_id %in% c(target_don_chrs, target_rec_chrs))
-    RCA$meta$rec_chr_ids <- target_rec_chrs
-    RCA$meta$don_chr_ids <- target_don_chrs
+    x$data <- dplyr::filter(x$data, .data$chr_id %in% c(target_chrs[[1]], target_chrs[[2]]))
+    x$meta$meta <- dplyr::filter(x$meta$meta,
+                                 .data$chr_id %in% c(target_chrs[[1]], target_chrs[[2]]))
+    x$meta$rec_chr_ids <- target_chrs[[2]]
+    x$meta$don_chr_ids <- target_chrs[[1]]
     
-    return(RCA)
+    return(x)
 }
+
+
+#' @exportS3Method base::print
+print.RCA <- function(x, ...) {
+    n_chr <- length(unique(x$data$chr_id))
+    cat(
+        'RCA object: ',
+        n_chr,
+        ' chromosomes (',
+        length(x$meta$don_chr_ids),
+        ' donor / ',
+        length(x$meta$rec_chr_ids),
+        ' recipient), ',
+        nrow(x$data),
+        ' windows, GC-corrected: ',
+        x$corrected,
+        '\n',
+        sep = ''
+    )
+    invisible(x)
+}
+
+#' @exportS3Method base::summary
+summary.RCA <- function(object, ...) {
+    subgenomes <- unique(object$meta$meta$subgenome)
+    chromosomes_per_subgenome <- stats::setNames(
+        vapply(
+            subgenomes,
+            \(d) {
+                length(unique(object$meta$meta$chr_id[object$meta$meta$subgenome == d]))
+            },
+            integer(1L)
+        ),
+        subgenomes
+    )
+    
+    out <- list(
+        n_chromosomes = length(unique(object$data$chr_id)),
+        n_subgenomes = length(subgenomes),
+        chromosomes_per_subgenome = chromosomes_per_subgenome,
+        corrected = object$corrected,
+        outliers = if (isTRUE(object$corrected))
+            object$outliers
+        else
+            NULL
+    )
+    class(out) <- 'summary.RCA'
+    out
+}
+
+#' @exportS3Method base::print
+print.summary.RCA <- function(x, ...) {
+    cat(sprintf(
+        "RCA Summary: %d chromosomes in %d subgenome(s): %s\n",
+        x$n_chromosomes,
+        x$n_subgenomes,
+        paste(
+            sprintf("%s: %d", names(x$chromosomes_per_subgenome), x$chromosomes_per_subgenome),
+            collapse = "; "
+        )
+    ))
+    
+    cat("GC-bias corrected:", if (isTRUE(x$corrected)) "Yes" else "No", "\n")
+    if (isTRUE(x$corrected) && !is.null(x$outliers)) {
+        cat(sprintf(
+            "Outlier thresholds | Coverage upper: %.2f, GC lower: %.3f, GC upper: %.3f\n",
+            x$outliers$cov_upper_bound,
+            x$outliers$gc_lower_bound,
+            x$outliers$gc_upper_bound
+        ))
+    }
+    invisible(x)
+}
+

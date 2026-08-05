@@ -1,0 +1,413 @@
+---
+title: "Introduction to MaMaMIA"
+author: "Aleksey Ermolaev"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to MaMaMIA}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 2.5,
+  dpi = 96,
+  out.width = "100%"
+)
+```
+
+# Overview
+
+**MaMaMIA** (Max Mapping for Meticulous Introgression Analysis) detects
+introgressed segments from Genotyping-by-Sequencing (GBS) coverage data.
+The workflow has five main steps:
+
+1.  Prepare windowed donor and recipient coverage and GC-content tables.
+2.  Build an RCA (Read Count Array) from those tables.
+3.  Correct coverage for GC-content bias.
+4.  Segment pairwise donor-recipient coverage differences with circular
+    binary segmentation (CBS).
+5.  Inspect putative introgressions and optionally export them as BEDPE.
+
+This vignette walks through that pipeline using the packaged `triticum`
+example dataset (*Triticum timopheevii* donor versus *Triticum aestivum*
+Chinese Spring T2T recipient).
+
+```{r setup}
+library(MaMaMIA)
+```
+
+# Preparing input data
+
+MaMaMIA expects windowed coverage (mapped read counts) and GC-content
+tables for both the **donor** and **recipient** genomes. The same
+preprocessing is applied independently to each genome. Downstream
+comparison matches windows by position index, not by shared genomic
+coordinates, so every chromosome-donor and recipient-must be tiled into
+the **same number of windows**.
+
+## Competitive mapping
+
+Reads are mapped to a concatenated reference that merges the donor and
+recipient genomes into one FASTA. Competitive mapping assigns each read
+to the genome (and chromosome) where it aligns best, so coverage
+reflects genome-specific signal rather than ambiguous cross-mapping
+between related sequences. More background is given in [Feuerborn et al.
+(2020)](https://doi.org/10.1186/s12864-020-07229-y).
+
+Mapped reads are filtered with `samtools` to retain primary, mapped
+alignments (`-F 2308`) of sufficient mapping quality (e.g.
+$\mathrm{MAPQ} \ge 20$).
+
+## Windowed coverage and GC content
+
+Filtered BAMs are summarised in fixed genomic windows (we recommend
+100-1000 windows per chromosome, but it is up to you) with `bedtools`.
+For a chromosome length file in [Genome
+format](https://bedtools.readthedocs.io/en/latest/content/general-usage.html#genome-file-format)
+and a filtered BAM `sample.bam`:
+
+``` bash
+bedtools makewindows -g chrom.genome -n 1000 > windows.bed
+bedtools nuc -fi concatenated_genomes.fa -bed windows.bed | cut -f1-3,5 > sample.gc
+bedtools coverage -a windows.bed -b sample.bam -counts > sample.cov
+```
+
+`bedtools nuc` reports several columns; column 5 is the fraction of G/C
+bases in the window. Coverage and GC tables passed to `RCA()` must each
+have exactly four columns (names are ignored):
+
+| Column | Meaning                                       |
+|--------|-----------------------------------------------|
+| 1      | Chromosome ID                                 |
+| 2      | Start (0-based)                               |
+| 3      | End (exclusive)                               |
+| 4      | Value (read count or GC fraction in $[0, 1]$) |
+
+Within each genome, coverage and GC tables must use identical window
+coordinates. On each chromosome, windows must form contiguous half-open
+intervals in row order (no gaps or overlaps). A chromosome metadata
+table (`meta`) supplies three columns: chromosome ID, a short display
+name, and a subgenome label. Donor and recipient chromosome IDs must be
+disjoint, as must their subgenome labels.
+
+# Load example data
+
+```{r load-data}
+data(triticum)
+```
+
+`triticum` provides precomputed tables from this pipeline:
+
+- `don_cov`, `don_gc` — *T. timopheevii* coverage and GC (14
+  chromosomes; At and G subgenomes; 1000 windows each)
+- `rec_cov`, `rec_gc` — *T. aestivum* Chinese Spring T2T coverage and GC
+  (21 chromosomes; A, B, and D subgenomes; 1000 windows each)
+- `meta` — chromosome ID, short name (e.g. `"1At"`, `"1A"`), and
+  subgenome for all 35 chromosomes
+
+# Build an RCA object
+
+`RCA()` joins donor and recipient windowed coverage and GC-content with
+chromosome metadata into a Read Count Array. It validates tiled windows,
+matching coverage/GC coordinates within each genome, equal window counts
+across all chromosomes, and disjoint donor/recipient chromosome IDs and
+subgenome labels. The result starts with `corrected = FALSE`. Set
+`presorted = FALSE` only if input tables are not already ordered by
+chromosome and coordinates (bedtools output usually is).
+
+```{r create-rca}
+RCA.object <- RCA(
+  dcov = don_cov,
+  dgc = don_gc,
+  rcov = rec_cov,
+  rgc = rec_gc,
+  meta = meta
+)
+summary(RCA.object)
+```
+
+`print()` reports chromosome counts (total, donor, recipient), window
+count, and GC-correction status. `summary()` lists chromosomes per
+subgenome and whether correction has been applied (`corrected = FALSE`
+at this stage).
+
+# Correct GC bias
+
+`correctReadCounts()` marks outlier windows, fits a zero-inflated
+negative binomial (ZINB) model of coverage as a smooth function of GC
+content (with subgenome as a covariate), and stores GC-corrected
+coverage in `cor.gc`. Ideal windows (retained after outlier filtering)
+are used for model fitting and later for segmentation. Outlier cutoffs
+are fixed at the 1%/99% GC quantiles and the 99% coverage quantile.
+Increase `cores` to speed up `glmmTMB` fitting on larger datasets:
+
+```{r correct-gc}
+corrected_data <- correctReadCounts(RCA.object, cores = 4L)
+summary(corrected_data)
+```
+
+After correction, `summary()` also reports the GC and coverage bounds
+stored in `$outliers`, and marks `corrected = TRUE`. The fitted model is
+kept in `$fit`.
+
+## Plotting coverage profiles
+
+`plot()` on an RCA object can show raw (`"orig_cov"`) or GC-corrected
+(`"corr_cov"`) coverage. By default only ideal windows are drawn; set
+`show_outliers = TRUE` to include filtered windows. If correction has
+not been run, `plot()` warns and falls back to raw coverage with
+outliers shown.
+
+```{r original-cov-plot}
+plot(corrected_data, plot.type = "orig_cov")
+```
+
+```{r corrected-cov-plot}
+plot(corrected_data, plot.type = "corr_cov")
+```
+
+```{r corrected-cov-plot-outliers}
+plot(corrected_data, plot.type = "orig_cov", show_outliers = TRUE)
+```
+
+## Zero-inflated negative binomial (ZINB) model
+
+Let $Y_i$ be the coverage in window $i$ with GC content $\mathrm{GC}_i$
+and subgenome $S_i$. Then
+
+$$Y_i \sim \mathrm{ZINB}(\mu_i, \theta, \pi_i)$$
+
+where
+
+$$\mu_i = f(\mathrm{GC}_i) + \beta_{S_i}, \qquad
+\operatorname{logit}(\pi_i) = g(\mathrm{GC}_i) + \gamma_{S_i}$$
+
+with $f$ and $g$ fitted as smooth splines. Corrected coverage scales the
+observed count by the ratio of expected coverage at a reference GC
+(median GC of ideal windows) to the fitted expectation at the window's
+own GC.
+
+# Subset coverage data to selected subgenomes or chromosomes
+
+Before segmentation, `subset()` can restrict an RCA object to selected
+donor and/or recipient chromosomes. Specify targets by subgenome label,
+by chromosome ID, or both (the two filters are combined as a union on
+each side). At least one argument must be non-`NULL`; omitting filters
+for one side leaves that side unchanged. The result must retain at least
+one donor and one recipient chromosome.
+
+By subgenome:
+
+```{r subset-subgenome-plot}
+subset_cd <- subset(
+  corrected_data,
+  don_subgenomes = "At",
+  rec_subgenomes = "A"
+)
+plot(subset_cd, plot.type = "corr_cov")
+```
+
+By chromosome ID:
+
+```{r subset-chromosome-plot, eval = FALSE}
+subset(
+  corrected_data,
+  don_chromlist = c("OY997261.1", "OY997263.1"),
+  rec_chromlist = c("CP155614.1", "CP155611.1")
+)
+```
+
+The rest of this vignette uses the subgenome-level subset (`At` / `A`)
+above.
+
+# Segmentation of donor-recipient difference coverage
+
+For each donor-recipient chromosome pair, `segments()` computes the
+difference in GC-corrected coverage on aligned ideal windows and runs
+circular binary segmentation (CBS) via
+[`DNAcopy::segment()`](https://rdrr.io/bioc/DNAcopy/man/segment.html).
+CBS recursively partitions the difference profile into contiguous
+regions of constant mean ([Olshen et al.
+2004](https://doi.org/10.1093/biostatistics/kxh008); [Venkatraman &
+Olshen 2007](https://doi.org/10.1093/bioinformatics/btl646)). The result
+is an `ISA` (Introgression Segment Array) object.
+
+## Donor-recipient chromosome pairs
+
+Segmentation requires an explicit named vector `target_pairs`: names are
+donor chromosome IDs and values are recipient chromosome IDs. There is
+no default all-pairs expansion; only the listed pairs are analysed. Here
+each donor chromosome is paired with the corresponding recipient
+chromosome from the subset:
+
+```{r segments}
+don_chromosomes <- subset_cd$meta$don_chr_ids
+rec_chromosomes <- subset_cd$meta$rec_chr_ids
+target_pairs <- setNames(rec_chromosomes, don_chromosomes)
+aat_segments <- segments(subset_cd,
+                         target_pairs = target_pairs)
+aat_segments
+```
+
+A single pair can be specified directly:
+
+```{r segments-one-pair, eval = FALSE}
+segments(
+  subset_cd,
+  target_pairs = c("OY997261.1" = "CP155614.1")
+)
+```
+
+## CBS parameters
+
+CBS behaviour is controlled by three arguments passed through to
+`DNAcopy::segment()` (with `undo.splits = "sdundo"`). Defaults are
+`alpha = 0.001`, `min_width = 2`, and `undo.SD = 1`.
+
+- `alpha` — significance level for the change-point test. Smaller values
+  accept fewer splits and yield coarser segments (`0 < alpha <= 1`).
+- `min_width` — minimum number of windows retained after segmentation;
+  shorter segments are dropped. Note that `DNAcopy::segment()` itself is
+  always called with `min.width = 2`; this value is applied as a
+  post-filter (`min_width >= 2`).
+- `undo.SD` — number of standard deviations between adjacent segment
+  means required to keep a split. Larger values prune more splits
+  attributed to local trends (`0 < undo.SD <= 10`).
+
+Custom parameters:
+
+```{r segments-custom-param, eval = FALSE}
+segments(
+  subset_cd,
+  target_pairs = target_pairs,
+  alpha = 0.01,
+  min_width = 5,
+  undo_SD = 1
+)
+```
+
+## Introgression detection thresholds
+
+After CBS, each segment is summarised by its mean (`seg.mean`) and
+median (`seg.median`) coverage difference. A segment is flagged as a
+putative introgression when the chosen statistic is at or above a
+threshold:
+
+- `threshold_type` — `"median"` (default) or `"mean"`.
+- `min_segment_median` — threshold when `threshold_type = "median"`
+  (default `0`).
+- `min_segment_mean` — threshold when `threshold_type = "mean"` (default
+  `0`).
+
+With the defaults, any segment whose median difference is non-negative
+is marked as a putative introgression. Raise the threshold to require a
+stronger donor excess, or switch to the mean:
+
+```{r segments-threshold, eval = FALSE}
+# Stricter median threshold
+segments(
+  subset_cd,
+  target_pairs = target_pairs,
+  min_segment_median = 5,
+  threshold_type = "median"
+)
+
+# Use segment mean instead of median
+segments(
+  subset_cd,
+  target_pairs = target_pairs,
+  threshold_type = "mean",
+  min_segment_mean = 5
+)
+```
+
+These flags can be revised later with `subset()` on the `ISA` object
+without re-running CBS (see `?subset.ISA`).
+
+# Plotting of segmentation result
+
+`plot()` on an `ISA` object draws the pairwise profiles already stored
+in that object (the pairs chosen at `segments()` time). Two styles are
+available via `plot.type`.
+
+## Mirrored coverage (`plot.type = "mirror"`)
+
+Donor GC-corrected coverage is plotted above zero and recipient coverage
+below, so shared structure and local excesses are easy to compare along
+the chromosome:
+
+```{r plot-mirror}
+plot(aat_segments, plot.type = "mirror")
+```
+
+## Coverage difference (`plot.type = "diff"`)
+
+The per-window difference is shown with a zero reference line.
+Horizontal bars mark the segment summary used for introgression calling
+(`seg.median` or `seg.mean`, as recorded in
+`aat_segments$meta$metrics`). By default only segments flagged as
+putative introgressions are drawn; set `all_segments = TRUE` to overlay
+every CBS segment:
+
+```{r plot-diff}
+plot(aat_segments, plot.type = "diff")
+```
+
+```{r plot-diff-all, eval = FALSE}
+plot(aat_segments, plot.type = "diff", all_segments = TRUE)
+```
+
+To restrict the plot to a subset of pairs, filter the `ISA` object first
+with `subset()` (see `?subset.ISA`), then call `plot()` on the result.
+
+# Inspecting putative introgressions
+
+`summary()` on an `ISA` object lists each putative introgression with
+donor and recipient chromosome, subgenome, start, end, and length.
+Coordinates can be reported in `bp`, `Kb`, `Mb`, or `Gb`:
+
+```{r summary-isa}
+summary(aat_segments, unit = "Mb", digits = 2)
+```
+
+Thresholds and pairs can be adjusted without re-running CBS. For
+example, keep only one pair and require a higher median difference:
+
+```{r subset-isa, eval = FALSE}
+aat_strict <- subset(
+  aat_segments,
+  target_pairs = c("OY997261.1" = "CP155614.1"),
+  min_segment_median = 5
+)
+summary(aat_strict, unit = "Mb")
+```
+
+# Export putative introgressions to BEDPE
+
+`writeToBedpe()` writes segments with `putative_introgression = TRUE` to
+a tab-separated BEDPE file. Each row is one donor–recipient interval
+pair. Columns include standard BEDPE fields plus chromosome names and
+subgenome labels; `score` is the active segment metric (`seg.median` or
+`seg.mean`):
+
+```{r export-bedpe}
+bedpe_file <- tempfile(fileext = ".bedpe")
+writeToBedpe(aat_segments, file = bedpe_file)
+read.table(bedpe_file, header = TRUE, sep = "\t")
+```
+
+If no putative introgressions remain after filtering, a header-only file
+is written and a warning is issued.
+
+# Session info
+
+```{r session-info}
+sessionInfo()
+```

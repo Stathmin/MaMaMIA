@@ -31,9 +31,31 @@ If GC-bias correction has not been performed (\code{x$corrected} is
 windows remain after filtering.
 }
 \examples{
-\dontrun{
+data(triticum)
+rca <- RCA(don_cov, don_gc, rec_cov, rec_gc, meta)
 plot(rca, plot.type = "orig_cov")
+\donttest{
+## Note: correctReadCounts() can take a while on the full dataset
+rca <- correctReadCounts(rca, cores = 4L, verbose = FALSE)
+}
+
+## For demonstration purposes, assume that GC bias correction was performed, 
+## by copying the 'cov' column to 'cor.gc'.
+rca$data$valid <- TRUE
+gc_q <- quantile(rca$data$gc[rca$data$valid], c(0.01, 0.99))
+cov_q <- quantile(rca$data$cov[rca$data$valid], 0.99)
+rca$data$ideal <- rca$data$valid & 
+                    (rca$data$gc >= gc_q[1]) & 
+                    (rca$data$gc <= gc_q[2]) & 
+                    (rca$data$cov <= cov_q)
+rca$corrected <- TRUE
+rca$outliers <- list(
+        gc_lower_bound = gc_q[1],
+        gc_upper_bound = gc_q[2],
+        cov_upper_bound = cov_q
+    )
+rca$data$cor.gc <- rca$data$cov
+
 plot(rca, plot.type = "corr_cov")
 plot(rca, plot.type = "orig_cov", show_outliers = TRUE)
-}
 }

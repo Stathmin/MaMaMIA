@@ -57,8 +57,10 @@ ideal windows remain before model fitting, or if no ideal windows remain
 after the post-correction coverage filter.
 }
 \examples{
-\dontrun{
-rca <- correctReadCounts(rca)
-rca <- correctReadCounts(rca, cores = 4L)
+data(triticum)
+rca <- RCA(don_cov, don_gc, rec_cov, rec_gc, meta)
+\donttest{
+## Note: correctReadCounts() can take a while on the full dataset
+rca <- correctReadCounts(rca, cores = 4L, verbose = FALSE)
 }
 }

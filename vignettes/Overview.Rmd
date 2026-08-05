@@ -11,14 +11,14 @@ editor_options:
     wrap: 72
 ---
 
-```{r, include = FALSE}
+```{r knit-param, include = FALSE}
 knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  fig.width = 8,
-  fig.height = 2.5,
-  dpi = 96,
-  out.width = "100%"
+    collapse = TRUE,
+    comment = "#>",
+    fig.width = 8,
+    fig.height = 2.5,
+    dpi = 96,
+    out.width = "100%"
 )
 ```
 
@@ -124,11 +124,11 @@ chromosome and coordinates (bedtools output usually is).
 
 ```{r create-rca}
 RCA.object <- RCA(
-  dcov = don_cov,
-  dgc = don_gc,
-  rcov = rec_cov,
-  rgc = rec_gc,
-  meta = meta
+    dcov = don_cov,
+    dgc = don_gc,
+    rcov = rec_cov,
+    rgc = rec_gc,
+    meta = meta
 )
 summary(RCA.object)
 ```
@@ -207,9 +207,9 @@ By subgenome:
 
 ```{r subset-subgenome-plot}
 subset_cd <- subset(
-  corrected_data,
-  don_subgenomes = "At",
-  rec_subgenomes = "A"
+    corrected_data,
+    don_subgenomes = "At",
+    rec_subgenomes = "A"
 )
 plot(subset_cd, plot.type = "corr_cov")
 ```
@@ -218,9 +218,9 @@ By chromosome ID:
 
 ```{r subset-chromosome-plot, eval = FALSE}
 subset(
-  corrected_data,
-  don_chromlist = c("OY997261.1", "OY997263.1"),
-  rec_chromlist = c("CP155614.1", "CP155611.1")
+    corrected_data,
+    don_chromlist = c("OY997261.1", "OY997263.1"),
+    rec_chromlist = c("CP155614.1", "CP155611.1")
 )
 ```
 
@@ -252,7 +252,8 @@ don_chromosomes <- subset_cd$meta$don_chr_ids
 rec_chromosomes <- subset_cd$meta$rec_chr_ids
 target_pairs <- setNames(rec_chromosomes, don_chromosomes)
 aat_segments <- segments(subset_cd,
-                         target_pairs = target_pairs)
+    target_pairs = target_pairs
+)
 aat_segments
 ```
 
@@ -260,8 +261,8 @@ A single pair can be specified directly:
 
 ```{r segments-one-pair, eval = FALSE}
 segments(
-  subset_cd,
-  target_pairs = c("OY997261.1" = "CP155614.1")
+    subset_cd,
+    target_pairs = c("OY997261.1" = "CP155614.1")
 )
 ```
 
@@ -285,11 +286,11 @@ Custom parameters:
 
 ```{r segments-custom-param, eval = FALSE}
 segments(
-  subset_cd,
-  target_pairs = target_pairs,
-  alpha = 0.01,
-  min_width = 5,
-  undo_SD = 1
+    subset_cd,
+    target_pairs = target_pairs,
+    alpha = 0.01,
+    min_width = 5,
+    undo_SD = 1
 )
 ```
 
@@ -313,18 +314,18 @@ stronger donor excess, or switch to the mean:
 ```{r segments-threshold, eval = FALSE}
 # Stricter median threshold
 segments(
-  subset_cd,
-  target_pairs = target_pairs,
-  min_segment_median = 5,
-  threshold_type = "median"
+    subset_cd,
+    target_pairs = target_pairs,
+    min_segment_median = 5,
+    threshold_type = "median"
 )
 
 # Use segment mean instead of median
 segments(
-  subset_cd,
-  target_pairs = target_pairs,
-  threshold_type = "mean",
-  min_segment_mean = 5
+    subset_cd,
+    target_pairs = target_pairs,
+    threshold_type = "mean",
+    min_segment_mean = 5
 )
 ```
 
@@ -382,9 +383,9 @@ example, keep only one pair and require a higher median difference:
 
 ```{r subset-isa, eval = FALSE}
 aat_strict <- subset(
-  aat_segments,
-  target_pairs = c("OY997261.1" = "CP155614.1"),
-  min_segment_median = 5
+    aat_segments,
+    target_pairs = c("OY997261.1" = "CP155614.1"),
+    min_segment_median = 5
 )
 summary(aat_strict, unit = "Mb")
 ```

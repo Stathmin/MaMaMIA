@@ -19,7 +19,7 @@ donor and recipient counts, window count, and whether GC-bias correction
 has been applied.
 }
 \examples{
-\dontrun{
+data(triticum)
+rca <- RCA(don_cov, don_gc, rec_cov, rec_gc, meta)
 print(rca)
-}
 }

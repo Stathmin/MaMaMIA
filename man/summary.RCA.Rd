@@ -29,10 +29,10 @@ Builds a structured summary of chromosome and subgenome counts for an
 \code{RCA} object, and whether GC-bias correction has been applied.
 }
 \examples{
-\dontrun{
+data(triticum)
+rca <- RCA(don_cov, don_gc, rec_cov, rec_gc, meta)
 summary(rca)
 s <- summary(rca)
 s$n_chromosomes
 s$outliers
-}
 }

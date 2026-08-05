@@ -48,13 +48,14 @@ filters for one side leaves that side unchanged. The subset must leave at
 least one donor and one recipient chromosome.
 }
 \examples{
-\dontrun{
+data(triticum)
+rca <- RCA(don_cov, don_gc, rec_cov, rec_gc, meta)
 rca_sub <- subset(rca, don_subgenomes = "At", rec_subgenomes = "A")
-rca_sub <- subset(rca, don_subgenomes = "G")  # all recipients kept
+rca_sub <- subset(rca, don_subgenomes = "G")
 rca_sub <- subset(
   rca,
   don_chromlist = "OY997261.1",
   rec_chromlist = "CP155614.1"
 )
-}
+rca_sub
 }

@@ -72,4 +72,9 @@ recipient \emph{Triticum aestivum} Chinese Spring T2T. Intended for use
 with \code{RCA()} as \code{dcov}, \code{dgc}, \code{rcov}, \code{rgc}, and
 \code{meta}.
 }
+\examples{
+data(triticum)
+head(don_cov)
+head(meta)
+}
 \keyword{datasets}

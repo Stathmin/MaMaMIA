@@ -1,7 +1,5 @@
 #' @noRd
-validate_target_pairs <- function(target_pairs,
-                                  don_chr_ids,
-                                  rec_chr_ids) {
+validate_target_pairs <- function(target_pairs, don_chr_ids, rec_chr_ids) {
     if (length(target_pairs) < 1L || is.null(names(target_pairs)) ||
         any(!nzchar(names(target_pairs)))) {
         stop(
@@ -9,7 +7,7 @@ validate_target_pairs <- function(target_pairs,
             call. = FALSE
         )
     }
-    
+
     target_don <- as.character(names(target_pairs))
     target_rec <- as.character(unname(target_pairs))
     stopifnot(
@@ -20,7 +18,7 @@ validate_target_pairs <- function(target_pairs,
         "Some recipient chromosome IDs in target_pairs are not present" =
             all(target_rec %in% rec_chr_ids)
     )
-    
+
     pairs <- data.frame(
         chr_id.don = target_don,
         chr_id.rec = target_rec,
@@ -56,27 +54,27 @@ empty_segments <- function() {
 annotate_segment_coords <- function(segments, out) {
     merge_data <- dplyr::select(out, dplyr::all_of(
         c(
-            'iid',
-            'chr_id.don',
-            'start.don',
-            'stop.don',
-            'chr_id.rec',
-            'start.rec',
-            'stop.rec'
+            "iid",
+            "chr_id.don",
+            "start.don",
+            "stop.don",
+            "chr_id.rec",
+            "start.rec",
+            "stop.rec"
         )
     ))
     segments |>
         dplyr::inner_join(
             y = dplyr::select(merge_data, !dplyr::all_of(c(
-                'stop.don', 'stop.rec'
+                "stop.don", "stop.rec"
             ))),
-            by = c('chr_id.don', 'chr_id.rec', 'loc.start' = 'iid')
+            by = c("chr_id.don", "chr_id.rec", "loc.start" = "iid")
         ) |>
         dplyr::inner_join(
             y = dplyr::select(merge_data, !dplyr::all_of(c(
-                'start.don', 'start.rec'
+                "start.don", "start.rec"
             ))),
-            by = c('chr_id.don', 'chr_id.rec', 'loc.end' = 'iid')
+            by = c("chr_id.don", "chr_id.rec", "loc.end" = "iid")
         )
 }
 
@@ -86,12 +84,12 @@ getSegments <- function(counts, chrom, maploc, alpha, undo.SD) {
         genomdat = counts,
         chrom = chrom,
         maploc = maploc,
-        data.type = 'logratio'
+        data.type = "logratio"
     ) |> DNAcopy::smooth.CNA()
     DNAcopy::segment(
         CNA.object,
         verbose = 0,
-        undo.splits = 'sdundo',
+        undo.splits = "sdundo",
         alpha = alpha,
         min.width = 2,
         undo.SD = undo.SD
@@ -101,17 +99,17 @@ getSegments <- function(counts, chrom, maploc, alpha, undo.SD) {
 #' @noRd
 validate_segmentation_params <- function(alpha, min_width, undo_SD) {
     if (alpha <= 0 || alpha > 1) {
-        stop('1 >= alpha > 0 is not satisfied', call. = FALSE)
+        stop("1 >= alpha > 0 is not satisfied", call. = FALSE)
     }
-    
+
     if (min_width < 2) {
-        stop('min_width must be >=2', call. = FALSE)
+        stop("min_width must be >=2", call. = FALSE)
     }
-    
+
     if (undo_SD <= 0 || undo_SD > 10) {
-        stop('10 >= undo_SD > 0 is not satisfied', call. = FALSE)
+        stop("10 >= undo_SD > 0 is not satisfied", call. = FALSE)
     }
-    
+
     list(alpha = alpha, undo.SD = undo_SD)
 }
 
@@ -123,7 +121,8 @@ as_window_df <- function(x, value_col, arg_name) {
     }
     if (!is.data.frame(x)) {
         stop(sprintf("`%s` must be a data.frame, tibble, or matrix", arg_name),
-             call. = FALSE)
+            call. = FALSE
+        )
     }
     if (ncol(x) != 4L) {
         stop(
@@ -135,12 +134,13 @@ as_window_df <- function(x, value_col, arg_name) {
             call. = FALSE
         )
     }
-    
+
     x <- as.data.frame(x, stringsAsFactors = FALSE)
     names(x) <- c("chr_id", "start", "stop", value_col)
-    
-    if (is.factor(x$chr_id))
+
+    if (is.factor(x$chr_id)) {
         x$chr_id <- as.character(x$chr_id)
+    }
     if (!is.atomic(x$chr_id) || is.list(x$chr_id)) {
         stop(
             sprintf(
@@ -151,25 +151,31 @@ as_window_df <- function(x, value_col, arg_name) {
         )
     }
     x$chr_id <- as.character(x$chr_id)
-    
+
     for (col in c("start", "stop", value_col)) {
         if (!is.numeric(x[[col]])) {
-            coerced <- suppressWarnings(as.numeric(x[[col]]))
-            if (anyNA(coerced) && !anyNA(x[[col]])) {
+            char_col <- as.character(x[[col]])
+            non_na <- !is.na(x[[col]])
+            looks_numeric <- !non_na | grepl(
+                "^\\s*[-+]?(([0-9]+\\.?[0-9]*)|(\\.[0-9]+))([eE][-+]?[0-9]+)?\\s*$",
+                char_col
+            )
+            if (!all(looks_numeric)) {
                 stop(sprintf("`%s$%s` must be numeric", arg_name, col),
-                     call. = FALSE)
+                    call. = FALSE
+                )
             }
-            x[[col]] <- coerced
+            x[[col]] <- as.numeric(char_col)
         }
     }
-    
+
     if (anyNA(x$start) || anyNA(x$stop)) {
         stop(sprintf("`%s` start/stop must not contain NA", arg_name),
-             call. = FALSE)
+            call. = FALSE
+        )
     }
     if (anyNA(x[[value_col]])) {
-        stop(
-            sprintf("`%s$%s` must not contain NA", arg_name, value_col),
+        stop(sprintf("`%s$%s` must not contain NA", arg_name, value_col),
             call. = FALSE
         )
     }
@@ -184,7 +190,7 @@ as_window_df <- function(x, value_col, arg_name) {
             call. = FALSE
         )
     }
-    
+
     return(x)
 }
 
@@ -195,10 +201,10 @@ validate_windows_tiled <- function(x, arg_name) {
         if (length(idx) < 2L) {
             next
         }
-        start <- x$start[idx]
-        stop <- x$stop[idx]
-        next_start <- start[-1L]
-        prev_stop <- stop[-length(stop)]
+        win_start <- x$start[idx]
+        win_stop <- x$stop[idx]
+        next_start <- win_start[-1L]
+        prev_stop <- win_stop[-length(win_stop)]
         if (any(next_start < prev_stop)) {
             stop(
                 sprintf(
@@ -212,10 +218,7 @@ validate_windows_tiled <- function(x, arg_name) {
         if (any(next_start > prev_stop)) {
             stop(
                 sprintf(
-                    paste0(
-                        "`%s` has gaps between windows on chromosome %s ",
-                        "(expected contiguous half-open intervals)"
-                    ),
+                    "`%s` has gaps between windows on chromosome %s (expected contiguous half-open intervals)",
                     arg_name,
                     chr
                 ),
@@ -234,7 +237,8 @@ as_meta_df <- function(x, arg_name = "meta") {
     }
     if (!is.data.frame(x)) {
         stop(sprintf("`%s` must be a data.frame, tibble, or matrix", arg_name),
-             call. = FALSE)
+            call. = FALSE
+        )
     }
     if (ncol(x) != 3L) {
         stop(
@@ -245,13 +249,14 @@ as_meta_df <- function(x, arg_name = "meta") {
             call. = FALSE
         )
     }
-    
+
     x <- as.data.frame(x, stringsAsFactors = FALSE)
     names(x) <- c("chr_id", "chr_name", "subgenome")
-    
+
     for (col in c("chr_id", "chr_name", "subgenome")) {
-        if (is.factor(x[[col]]))
+        if (is.factor(x[[col]])) {
             x[[col]] <- as.character(x[[col]])
+        }
         if (!is.atomic(x[[col]]) || is.list(x[[col]])) {
             stop(
                 sprintf(
@@ -264,14 +269,14 @@ as_meta_df <- function(x, arg_name = "meta") {
         }
         x[[col]] <- as.character(x[[col]])
     }
-    
+
     if (anyNA(x)) {
         stop(sprintf("`%s` must not contain NA", arg_name), call. = FALSE)
     }
     if (anyDuplicated(x$chr_id)) {
         stop(sprintf("`%s$chr_id` must be unique", arg_name), call. = FALSE)
     }
-    
+
     return(x)
 }
 
@@ -295,7 +300,7 @@ resolve_chr_targets <- function(meta,
             logical(1)
         ))
     )
-    
+
     if (!is.null(don_chromlist) && length(don_chromlist) == 0L) {
         stop("`don_chromlist` must be NULL or non-empty", call. = FALSE)
     }
@@ -308,24 +313,32 @@ resolve_chr_targets <- function(meta,
     if (!is.null(rec_subgenomes) && length(rec_subgenomes) == 0L) {
         stop("`rec_subgenomes` must be NULL or non-empty", call. = FALSE)
     }
-    
+
     if (!is.null(don_subgenomes)) {
-        stopifnot("Unknown donor subgenome label(s)" =
-                      all(don_subgenomes %in% meta$subgenome))
+        stopifnot(
+            "Unknown donor subgenome label(s)" =
+                all(don_subgenomes %in% meta$subgenome)
+        )
     }
     if (!is.null(rec_subgenomes)) {
-        stopifnot("Unknown recipient subgenome label(s)" =
-                      all(rec_subgenomes %in% meta$subgenome))
+        stopifnot(
+            "Unknown recipient subgenome label(s)" =
+                all(rec_subgenomes %in% meta$subgenome)
+        )
     }
     if (!is.null(don_chromlist)) {
-        stopifnot("Unknown donor chromosome ID(s)" =
-                      all(don_chromlist %in% don_chr_ids))
+        stopifnot(
+            "Unknown donor chromosome ID(s)" =
+                all(don_chromlist %in% don_chr_ids)
+        )
     }
     if (!is.null(rec_chromlist)) {
-        stopifnot("Unknown recipient chromosome ID(s)" =
-                      all(rec_chromlist %in% rec_chr_ids))
+        stopifnot(
+            "Unknown recipient chromosome ID(s)" =
+                all(rec_chromlist %in% rec_chr_ids)
+        )
     }
-    
+
     resolve_one <- function(chromlist, subgenomes, current_ids) {
         current_ids <- as.character(current_ids)
         if (is.null(chromlist) && is.null(subgenomes)) {
@@ -333,29 +346,22 @@ resolve_chr_targets <- function(meta,
         }
         ids <- character(0)
         if (!is.null(subgenomes)) {
-            ids <- c(
-                ids,
-                intersect(
-                    as.character(meta$chr_id[meta$subgenome %in% subgenomes]),
-                    current_ids
-                )
-            )
+            ids <- c(ids, intersect(as.character(meta$chr_id[meta$subgenome %in% subgenomes]), current_ids))
         }
         if (!is.null(chromlist)) {
             ids <- c(ids, as.character(chromlist))
         }
         unique(ids)
     }
-    
+
     target_don <- resolve_one(don_chromlist, don_subgenomes, don_chr_ids)
     target_rec <- resolve_one(rec_chromlist, rec_subgenomes, rec_chr_ids)
     if (length(target_don) == 0L || length(target_rec) == 0L) {
-        stop(
-            "Subset would leave donor or recipient with no chromosomes",
+        stop("Subset would leave donor or recipient with no chromosomes",
             call. = FALSE
         )
     }
-    
+
     list(target_don, target_rec)
 }
 
@@ -368,15 +374,9 @@ validate_equal_n_windows <- function(chr_id) {
     }
     n_unique <- length(unique(as.integer(counts)))
     if (n_unique != 1L) {
-        detail <- paste(
-            sprintf("%s=%d", names(counts), as.integer(counts)),
-            collapse = ", "
-        )
-        stop(
-            paste0(
-                "All chromosomes must have the same number of windows; found: ",
-                detail
-            ),
+        detail <- paste(sprintf("%s=%d", names(counts), as.integer(counts)), collapse = ", ")
+        stop("All chromosomes must have the same number of windows; found: ",
+            detail,
             call. = FALSE
         )
     }
@@ -391,16 +391,12 @@ check_cores <- function(x) {
         max_cores <- 1L
     }
     if (is.na(x) || x < 1L || x > max_cores) {
-        warning(
-            paste0(
-                'Cores must be between 1 and ',
-                max_cores,
-                '. Fallback to 1 core.'
-            ),
+        warning("Cores must be between 1 and ",
+            max_cores,
+            ". Fallback to 1 core.",
             call. = FALSE
         )
         return(1L)
     }
     return(x)
 }
-

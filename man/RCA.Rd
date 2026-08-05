@@ -73,13 +73,13 @@ disjoint subgenome labels between donor and recipient, and stops if any
 chromosome has a different window count from the others.
 }
 \examples{
-\dontrun{
+data(triticum)
 rca <- RCA(
-  dcov = donor_coverage,
-  dgc = donor_gc,
-  rcov = recipient_coverage,
-  rgc = recipient_gc,
+  dcov = don_cov,
+  dgc = don_gc,
+  rcov = rec_cov,
+  rgc = rec_gc,
   meta = meta
 )
-}
+rca
 }

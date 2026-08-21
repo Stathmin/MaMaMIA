@@ -227,6 +227,36 @@ subset(
 The rest of this vignette uses the subgenome-level subset (`At` / `A`)
 above.
 
+# Reversing chromosome orientation
+
+When the donor and recipient assemblies are built independently,
+homologous chromosomes may be assembled in opposite orientations. Their
+per-window coverage and GC vectors then run in opposite directions along
+the genome, so position-by-position comparison aligns the wrong windows.
+
+`reverseWindows()` flips the effective orientation of selected
+chromosomes so the two genomes can be compared directly. The window
+indexes (`iid`, `start`, `stop`, and the chromosome identifier) are
+kept unchanged; instead the value vectors (coverage, GC-corrected
+coverage, and the per-window validity flags) are reversed within each
+selected chromosome. Chromosomes are selected by their **ID** (the
+`chr_id` column of the meta table), not by their short display name
+(`chr_name`):
+
+```{r reverse-rca}
+# Reverse donor chromosome 1At
+subset_cd_rev1At <- reverseWindows(
+    subset_cd,
+    chr_ids = "OY997261.1"
+)
+# Compare with original 1At chromosome
+plot(subset_cd_rev1At, plot.type = "corr_cov")
+```
+
+This orientation marker is preserved when the chromosome is passed on:
+segmentation (`segments()`, below) and plotting see the reversed
+profile.
+
 # Segmentation of donor-recipient difference coverage
 
 For each donor-recipient chromosome pair, `segments()` computes the
@@ -331,6 +361,25 @@ segments(
 
 These flags can be revised later with `subset()` on the `ISA` object
 without re-running CBS (see `?subset.ISA`).
+
+## Reversing after segmentation
+
+`reverseWindows()` also operates on an `ISA` object. When a chromosome
+included in the pairwise comparison is reversed, the difference profile
+of every donor-recipient pair containing it changes, so segmentation is
+**recomputed** for those pairs automatically. Segments of pairs that do
+not involve a reversed chromosome are left untouched.
+
+```{r reverse-isa, eval = FALSE}
+aat_segments <- reverseWindows(
+    aat_segments,
+    chr_ids = "OY997261.1"
+)
+```
+
+Apply the reversal as early as possible - on the `RCA` object before
+`segments()` - and only use the `ISA` form when you need to flip a
+chromosome in an already-segmented result.
 
 # Plotting of segmentation result
 

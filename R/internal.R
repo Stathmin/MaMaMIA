@@ -97,6 +97,44 @@ getSegments <- function(counts, chrom, maploc, alpha, undo.SD) {
 }
 
 #' @noRd
+segment_pair_data <- function(pair_data, don, rec, meta, param, colname, threshold, min_width) {
+    if (nrow(pair_data) < 2L) {
+        warning(
+            sprintf(
+                "Skipping donor %s / recipient %s: need at least 2 ideal windows for CBS, got %d",
+                don,
+                rec,
+                nrow(pair_data)
+            ),
+            call. = FALSE
+        )
+        return(NULL)
+    }
+    getSegments(
+        counts = pair_data$diff,
+        chrom = rep_len("1", nrow(pair_data)),
+        maploc = pair_data$iid,
+        alpha = param$alpha,
+        undo.SD = param$undo.SD
+    ) |>
+        DNAcopy::segments.summary() |>
+        dplyr::select(!dplyr::all_of(c("ID", "chrom"))) |>
+        dplyr::mutate(
+            putative_introgression = .data[[colname]] >= threshold,
+            chr_id.don = don,
+            chr_id.rec = rec,
+            .before = 1L
+        ) |>
+        dplyr::inner_join(meta, by = c("chr_id.don" = "chr_id")) |>
+        dplyr::inner_join(
+            meta,
+            by = c("chr_id.rec" = "chr_id"),
+            suffix = c(".don", ".rec")
+        ) |>
+        dplyr::filter((.data$loc.end - .data$loc.start + 1) >= min_width)
+}
+
+#' @noRd
 validate_segmentation_params <- function(alpha, min_width, undo_SD) {
     if (alpha <= 0 || alpha > 1) {
         stop("1 >= alpha > 0 is not satisfied", call. = FALSE)
@@ -110,7 +148,7 @@ validate_segmentation_params <- function(alpha, min_width, undo_SD) {
         stop("10 >= undo_SD > 0 is not satisfied", call. = FALSE)
     }
 
-    list(alpha = alpha, undo.SD = undo_SD)
+    list(alpha = alpha, undo.SD = undo_SD, min.width = min_width)
 }
 
 
@@ -399,4 +437,42 @@ check_cores <- function(x) {
         return(1L)
     }
     return(x)
+}
+
+#' @noRd
+reverse_chr_value_cols <- function(df, chr_ids, cols) {
+    if (length(cols) == 0L) {
+        return(df)
+    }
+    for (id in chr_ids) {
+        idx <- which(df$chr_id == id)
+        if (length(idx) < 2L) {
+            next
+        }
+        df[idx, cols] <- df[rev(idx), cols]
+    }
+    df
+}
+
+#' @noRd
+reverse_paired_side <- function(df, chr_id_side, target_ids, value_cols) {
+    if (length(value_cols) == 0L) {
+        return(df)
+    }
+    target_rows <- which(as.character(df[[chr_id_side]]) %in% target_ids)
+    if (length(target_rows) == 0L) {
+        return(df)
+    }
+
+    pair <- paste(
+        as.character(df$chr_id.don[target_rows]),
+        as.character(df$chr_id.rec[target_rows])
+    )
+    for (g in unique(pair)) {
+        gidx <- target_rows[pair == g]
+        if (length(gidx) > 1L) {
+            df[gidx, value_cols] <- df[rev(gidx), value_cols]
+        }
+    }
+    df
 }

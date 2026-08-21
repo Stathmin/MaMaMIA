@@ -157,6 +157,34 @@ correctReadCounts <- function(RCA, cores = 1L, verbose = TRUE) {
     return(RCA)
 }
 
+#' @rdname reverseWindows
+#' @export
+reverseWindows.RCA <- function(x, chr_ids, ...) {
+    stopifnot("Input is not RCA object" = inherits(x, "RCA"))
+
+    chr_ids <- as.character(chr_ids)
+    if (length(chr_ids) == 0L) {
+        warning("No chromosomes requested; returning input unchanged",
+            call. = FALSE
+        )
+        return(x)
+    }
+    unknown <- setdiff(chr_ids, unique(as.character(x$data$chr_id)))
+    stopifnot(
+        "Some chromosome IDs in `chr_ids` are not present in the object" =
+            length(unknown) == 0L
+    )
+
+    value_cols <- intersect(
+        names(x$data),
+        c("cov", "gc", "cor.gc", "valid", "ideal")
+    )
+    x$data <- reverse_chr_value_cols(x$data, chr_ids, value_cols)
+
+    return(x)
+}
+
+
 #' @exportS3Method base::plot
 #' @importFrom rlang .data
 plot.RCA <- function(x,

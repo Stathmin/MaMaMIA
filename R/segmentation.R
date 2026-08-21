@@ -48,42 +48,13 @@ segments <- function(RCA,
             }),
             segments = purrr::pmap(list(
                 .data$data, .data$chr_id.don, .data$chr_id.rec
-            ), \(x, don, rec) {
-                if (nrow(x) < 2L) {
-                    warning(
-                        sprintf(
-                            "Skipping donor %s / recipient %s: need at least 2 ideal windows for CBS, got %d",
-                            don,
-                            rec,
-                            nrow(x)
-                        ),
-                        call. = FALSE
-                    )
-                    return(NULL)
-                }
-                getSegments(
-                    counts = x$diff,
-                    chrom = rep_len("1", nrow(x)),
-                    maploc = x$iid,
-                    alpha = param$alpha,
-                    undo.SD = param$undo.SD
-                ) |>
-                    DNAcopy::segments.summary() |>
-                    dplyr::select(!dplyr::all_of(c("ID", "chrom"))) |>
-                    dplyr::mutate(
-                        putative_introgression = .data[[colname]] >= threshold,
-                        chr_id.don = don,
-                        chr_id.rec = rec,
-                        .before = 1L
-                    ) |>
-                    dplyr::inner_join(RCA$meta$meta, by = c("chr_id.don" = "chr_id")) |>
-                    dplyr::inner_join(
-                        RCA$meta$meta,
-                        by = c("chr_id.rec" = "chr_id"),
-                        suffix = c(".don", ".rec")
-                    ) |>
-                    dplyr::filter((.data$loc.end - .data$loc.start + 1) >= min_width)
-            }),
+            ), segment_pair_data,
+            meta = RCA$meta$meta,
+            param = param,
+            colname = colname,
+            threshold = threshold,
+            min_width = min_width
+            ),
             .keep = "unused"
         )
 
@@ -112,6 +83,119 @@ segments <- function(RCA,
         class = "ISA"
     )
 }
+
+#' @rdname reverseWindows
+#' @export
+#' @importFrom rlang .data
+reverseWindows.ISA <- function(x, chr_ids, ...) {
+    stopifnot("Input is not ISA object" = inherits(x, "ISA"))
+
+    chr_ids <- as.character(chr_ids)
+    if (length(chr_ids) == 0L) {
+        warning("No chromosomes requested; returning input unchanged",
+            call. = FALSE
+        )
+        return(x)
+    }
+    known <- c(
+        as.character(x$meta$don_chr_ids),
+        as.character(x$meta$rec_chr_ids)
+    )
+    unknown <- setdiff(chr_ids, known)
+    stopifnot(
+        "Some chromosome IDs in `chr_ids` are not present in the object" =
+            length(unknown) == 0L
+    )
+
+    don_targets <- intersect(chr_ids, as.character(x$meta$don_chr_ids))
+    rec_targets <- intersect(chr_ids, as.character(x$meta$rec_chr_ids))
+
+    don_cols <- intersect(
+        names(x$out),
+        paste0(c("cov", "gc", "cor.gc", "valid", "ideal"), ".don")
+    )
+    rec_cols <- intersect(
+        names(x$out),
+        paste0(c("cov", "gc", "cor.gc", "valid", "ideal"), ".rec")
+    )
+
+    # Reverse the donor-side value vectors for the requested donor chromosomes,
+    # within each (donor, recipient) pair so row order is preserved.
+    if (!is.null(x$out) && nrow(x$out) > 0L &&
+        length(don_targets) > 0L && length(don_cols) > 0L) {
+        x$out <- reverse_paired_side(
+            x$out, chr_id_side = "chr_id.don",
+            target_ids = don_targets, value_cols = don_cols
+        )
+    }
+
+    # Reverse the recipient-side value vectors.
+    if (!is.null(x$out) && nrow(x$out) > 0L &&
+        length(rec_targets) > 0L && length(rec_cols) > 0L) {
+        x$out <- reverse_paired_side(
+            x$out, chr_id_side = "chr_id.rec",
+            target_ids = rec_targets, value_cols = rec_cols
+        )
+    }
+
+    # Recompute the derived difference so it stays consistent with the reversed
+    # cor.gc vectors.
+    if (!is.null(x$out) && nrow(x$out) > 0L) {
+        x$out <- dplyr::mutate(
+            x$out,
+            diff = .data$cor.gc.don - .data$cor.gc.rec
+        )
+    }
+
+    # Re-run CBS for every pair containing a reversed chromosome, since those
+    # pairs' difference profiles have changed orientation. Unaffected pairs'
+    # segments are kept as-is.
+    affected_pairs <- dplyr::filter(
+        x$meta$target_pairs,
+        .data$chr_id.don %in% chr_ids | .data$chr_id.rec %in% chr_ids
+    )
+    if (!is.null(x$out) && nrow(x$out) > 0L && nrow(affected_pairs) > 0L) {
+        affected_segments <- purrr::pmap(
+            list(affected_pairs$chr_id.don, affected_pairs$chr_id.rec),
+            \(don, rec) {
+                pair_rows <- dplyr::filter(
+                    x$out,
+                    .data$chr_id.don == !!don & .data$chr_id.rec == !!rec
+                )
+                segment_pair_data(
+                    pair_rows,
+                    don = don,
+                    rec = rec,
+                    meta = x$meta$meta,
+                    param = x$param,
+                    colname = x$meta$metrics,
+                    threshold = x$meta$metrics_threshold,
+                    min_width = x$param$min.width
+                )
+            }
+        )
+        x$segments <- dplyr::bind_rows(
+            dplyr::anti_join(
+                x$segments,
+                affected_pairs,
+                by = c("chr_id.don", "chr_id.rec")
+            ),
+            purrr::compact(affected_segments)
+        )
+    }
+
+    # Keep the underlying per-window table aligned as well.
+    if (!is.null(x$data) && nrow(x$data) > 0L) {
+        value_cols <- intersect(
+            names(x$data),
+            c("cov", "gc", "cor.gc", "valid", "ideal")
+        )
+        x$data <- reverse_chr_value_cols(x$data, chr_ids, value_cols)
+    }
+
+    return(x)
+}
+
 
 #' @exportS3Method base::subset
 #' @importFrom rlang .data

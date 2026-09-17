@@ -21,7 +21,8 @@ Depends:
     R (>= 4.6.0)
 Suggests: 
     knitr (>= 1.51),
-    rmarkdown (>= 2.31)
+    rmarkdown (>= 2.31),
+    testthat (>= 3.0.0)
 biocViews:
     StructuralVariation,
     Coverage,
@@ -29,4 +30,5 @@ biocViews:
     GenomicVariation,
     Sequencing
 VignetteBuilder: knitr
+Config/testthat/edition: 3
 Config/roxygen2/version: 8.1.0

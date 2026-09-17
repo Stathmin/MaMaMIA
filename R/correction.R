@@ -126,12 +126,14 @@ correctReadCounts <- function(RCA, cores = 1L, verbose = TRUE) {
     )
 
     gc_ref <- stats::median(RCA$data$gc[RCA$data$ideal], na.rm = TRUE)
-    predict_actual <- stats::predict(fit, newdata = RCA$data, type = "response")
-    predict_ref <- stats::predict(fit,
-        newdata = transform(RCA$data, gc = gc_ref),
-        type = "response"
+    fitted_response <- predict_zinb_response(
+        fit,
+        gc = RCA$data$gc,
+        subgenome = RCA$data$subgenome,
+        gc_ref = gc_ref
     )
-    RCA$data$cor.gc <- RCA$data$cov * (predict_ref / (predict_actual + 1e-8))
+    RCA$data$cor.gc <- RCA$data$cov *
+        (fitted_response$ref / (fitted_response$actual + 1e-8))
 
     RCA$data$ideal <- RCA$data$ideal &
         RCA$data$cor.gc < stats::quantile(RCA$data$cor.gc,

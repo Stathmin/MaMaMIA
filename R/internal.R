@@ -476,3 +476,99 @@ reverse_paired_side <- function(df, chr_id_side, target_ids, value_cols) {
     }
     df
 }
+
+#' Mean response of the fitted ZINB coverage model for new data
+#'
+#' `glmmTMB::predict()` with `newdata` rebuilds the AD function and re-solves the
+#' smooth coefficients on every call, which costs seconds largely independently
+#' of the number of prediction rows. The design matrices alone are enough for a
+#' mean response, and `predict(debug = TRUE)` returns them without that step.
+#'
+#' The augmented design matrices hold the fitting rows first and the prediction
+#' rows last, so the response is taken from the tail. Errors are raised (and
+#' caught by `predict_zinb_response()`) when that layout does not hold.
+#'
+#' @noRd
+eta_zinb_response <- function(fit, newdata) {
+    tmb <- stats::predict(fit, newdata = newdata, debug = TRUE)$data.tmb
+    if (is.null(dim(tmb$X))) {
+        stop("Fitted model exposes no dense conditional design matrix", call. = FALSE)
+    }
+    n_aug <- nrow(tmb$X)
+    n_new <- nrow(newdata)
+    if (n_aug != nrow(fit$frame) + n_new) {
+        stop("Unexpected augmented design size; cannot align predictions", call. = FALSE)
+    }
+
+    pars <- fit$fit$parfull
+    get_par <- function(name) {
+        out <- pars[names(pars) == name]
+        if (length(out) == 0L) {
+            stop("Fitted model has no `", name, "` parameter", call. = FALSE)
+        }
+        out
+    }
+
+    eta_cond <- as.numeric(as.matrix(tmb$X) %*% get_par("beta")) +
+        as.numeric(as.matrix(tmb$Z) %*% get_par("b"))
+    eta_zi <- as.numeric(as.matrix(tmb$Xzi) %*% get_par("betazi")) +
+        as.numeric(as.matrix(tmb$Zzi) %*% get_par("bzi"))
+
+    idx <- (n_aug - n_new + 1L):n_aug
+    (1 - stats::plogis(eta_zi))[idx] * exp(eta_cond)[idx]
+}
+
+#' Expected ZINB coverage at the observed and at a reference GC content
+#'
+#' Evaluates the fitted model once for every distinct (GC, subgenome) pair plus
+#' the reference-GC rows, then maps the results back to the input windows.
+#' Predictions for the reference GC depend only on the subgenome, so the extra
+#' rows are just one per subgenome.
+#'
+#' Falls back to `glmmTMB::predict()` if the fast path is unavailable, so the
+#' returned values match the previous implementation up to floating point noise.
+#'
+#' @noRd
+predict_zinb_response <- function(fit, gc, subgenome, gc_ref) {
+    n <- length(gc)
+
+    fallback <- function() {
+        nd <- data.frame(gc = gc, subgenome = subgenome)
+        list(
+            actual = as.numeric(stats::predict(fit, newdata = nd, type = "response")),
+            ref = as.numeric(stats::predict(fit,
+                newdata = transform(nd, gc = gc_ref),
+                type = "response"
+            ))
+        )
+    }
+
+    ok <- !is.na(gc) & !is.na(subgenome)
+    if (!any(ok)) {
+        na <- rep(NA_real_, n)
+        return(list(actual = na, ref = na))
+    }
+
+    key <- function(g, s) paste(sprintf("%.17g", g), s, sep = "\r")
+    rows <- data.frame(gc = gc[ok], subgenome = as.character(subgenome[ok]))
+    row_keys <- key(rows$gc, rows$subgenome)
+    unique_rows <- rows[!duplicated(row_keys), , drop = FALSE]
+    unique_keys <- key(unique_rows$gc, unique_rows$subgenome)
+    subgenomes <- unique(unique_rows$subgenome)
+    ref_rows <- data.frame(gc = gc_ref, subgenome = subgenomes)
+
+    pred <- tryCatch(
+        eta_zinb_response(fit, rbind(unique_rows, ref_rows)),
+        error = function(e) NULL
+    )
+    if (is.null(pred) || length(pred) != nrow(unique_rows) + nrow(ref_rows)) {
+        return(fallback())
+    }
+
+    n_unique <- nrow(unique_rows)
+    actual <- rep(NA_real_, n)
+    actual[ok] <- pred[match(row_keys, unique_keys)]
+    ref <- rep(NA_real_, n)
+    ref[ok] <- pred[n_unique + match(rows$subgenome, subgenomes)]
+    list(actual = actual, ref = ref)
+}

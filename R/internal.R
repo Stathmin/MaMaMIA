@@ -78,22 +78,50 @@ annotate_segment_coords <- function(segments, out) {
         )
 }
 
+#' Run an expression under a fixed RNG seed
+#'
+#' CBS derives permutation-based p-values, so `DNAcopy::segment()` is stochastic:
+#' repeated calls on the same data can return different segment counts. Seeding
+#' here makes segmentation reproducible, and the caller's RNG state is restored
+#' afterwards so the surrounding session is unaffected.
+#'
 #' @noRd
-getSegments <- function(counts, chrom, maploc, alpha, undo.SD) {
-    CNA.object <- DNAcopy::CNA(
-        genomdat = counts,
-        chrom = chrom,
-        maploc = maploc,
-        data.type = "logratio"
-    ) |> DNAcopy::smooth.CNA()
-    DNAcopy::segment(
-        CNA.object,
-        verbose = 0,
-        undo.splits = "sdundo",
-        alpha = alpha,
-        min.width = 2,
-        undo.SD = undo.SD
+with_local_seed <- function(seed, code) {
+    has_state <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+    previous <- if (has_state) get(".Random.seed", envir = globalenv()) else NULL
+    on.exit(
+        {
+            if (has_state) {
+                assign(".Random.seed", previous, envir = globalenv())
+            } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+                rm(".Random.seed", envir = globalenv())
+            }
+        },
+        add = TRUE
     )
+
+    set.seed(as.integer(seed))
+    force(code)
+}
+
+#' @noRd
+getSegments <- function(counts, chrom, maploc, alpha, undo.SD, seed = 1L) {
+    with_local_seed(seed, {
+        CNA.object <- DNAcopy::CNA(
+            genomdat = counts,
+            chrom = chrom,
+            maploc = maploc,
+            data.type = "logratio"
+        ) |> DNAcopy::smooth.CNA()
+        DNAcopy::segment(
+            CNA.object,
+            verbose = 0,
+            undo.splits = "sdundo",
+            alpha = alpha,
+            min.width = 2,
+            undo.SD = undo.SD
+        )
+    })
 }
 
 #' @noRd
@@ -115,7 +143,8 @@ segment_pair_data <- function(pair_data, don, rec, meta, param, colname, thresho
         chrom = rep_len("1", nrow(pair_data)),
         maploc = pair_data$iid,
         alpha = param$alpha,
-        undo.SD = param$undo.SD
+        undo.SD = param$undo.SD,
+        seed = if (is.null(param$seed)) 1L else param$seed
     ) |>
         DNAcopy::segments.summary() |>
         dplyr::select(!dplyr::all_of(c("ID", "chrom"))) |>
@@ -135,7 +164,7 @@ segment_pair_data <- function(pair_data, don, rec, meta, param, colname, thresho
 }
 
 #' @noRd
-validate_segmentation_params <- function(alpha, min_width, undo_SD) {
+validate_segmentation_params <- function(alpha, min_width, undo_SD, seed = 1L) {
     if (alpha <= 0 || alpha > 1) {
         stop("1 >= alpha > 0 is not satisfied", call. = FALSE)
     }
@@ -148,7 +177,16 @@ validate_segmentation_params <- function(alpha, min_width, undo_SD) {
         stop("10 >= undo_SD > 0 is not satisfied", call. = FALSE)
     }
 
-    list(alpha = alpha, undo.SD = undo_SD, min.width = min_width)
+    if (!is.numeric(seed) || length(seed) != 1L || is.na(seed)) {
+        stop("seed must be a single number", call. = FALSE)
+    }
+
+    list(
+        alpha = alpha,
+        undo.SD = undo_SD,
+        min.width = min_width,
+        seed = as.integer(seed)
+    )
 }
 
 

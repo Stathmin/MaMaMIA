@@ -515,19 +515,86 @@ reverse_paired_side <- function(df, chr_id_side, target_ids, value_cols) {
     df
 }
 
-#' Mean response of the fitted ZINB coverage model for new data
+
+#' Fixed and random design columns of a stored mgcv smooth for new values
 #'
-#' `glmmTMB::predict()` with `newdata` rebuilds the AD function and re-solves the
-#' smooth coefficients on every call, which costs seconds largely independently
-#' of the number of prediction rows. The design matrices alone are enough for a
-#' mean response, and `predict(debug = TRUE)` returns them without that step.
-#'
-#' The augmented design matrices hold the fitting rows first and the prediction
-#' rows last, so the response is taken from the tail. Errors are raised (and
-#' caught by `predict_zinb_response()`) when that layout does not hold.
+#' glmmTMB turns an `s()` term into one unpenalised fixed column plus a set of
+#' penalised random-effect columns by calling `mgcv::smooth2random(type = 2)`.
+#' That split is a linear map of the evaluated basis which depends only on the
+#' stored smooth (its penalty, rank and df), so the same map can be applied to
+#' basis rows evaluated at new values. Reproducing it here avoids rebuilding the
+#' AD function just to obtain the design matrices.
 #'
 #' @noRd
-eta_zinb_response <- function(fit, newdata) {
+smooth_design <- function(sm, gc) {
+    ev <- eigen(sm$S[[1L]], symmetric = TRUE)
+    if (ev$vectors[1L, 1L] < 0) {
+        ev$vectors <- -ev$vectors
+    }
+    p_rank <- min(sm$rank, ncol(sm$X))
+    null_rank <- sm$df - sm$rank
+    scaling <- 1 / sqrt(c(ev$values[seq_len(p_rank)], rep(1, null_rank)))
+    basis <- mgcv::PredictMat(sm, data = data.frame(gc = gc)) %*%
+        t(t(ev$vectors) * scaling)
+    fixed <- if (p_rank < sm$df) {
+        basis[, (p_rank + 1L):sm$df, drop = FALSE]
+    } else {
+        matrix(0, nrow(basis), 0L)
+    }
+    list(
+        fixed = fixed,
+        random = basis[, seq_len(p_rank), drop = FALSE],
+        label = sm$label
+    )
+}
+
+#' Fixed and random design matrices for the fitted coverage model
+#'
+#' Colours are checked against the fitted coefficients, so an unexpected model
+#' structure raises an error instead of silently returning wrong numbers; the
+#' caller falls back to the generic glmmTMB path in that case.
+#'
+#' @noRd
+glmmtmb_design <- function(fit, newdata) {
+    subgenomes <- levels(factor(fit$frame$subgenome))
+    if (anyNA(factor(newdata$subgenome, levels = subgenomes))) {
+        stop("unknown subgenome level", call. = FALSE)
+    }
+    dummies <- unname(stats::model.matrix(
+        ~ factor(newdata$subgenome, levels = subgenomes)
+    )[, -1L, drop = FALSE])
+
+    build <- function(part, coef_names) {
+        info <- fit$modelInfo$reTrms[[part]]$smooth_info
+        if (length(info) != 1L) {
+            stop("expected exactly one smooth in `", part, "`", call. = FALSE)
+        }
+        sd <- smooth_design(info[[1L]]$sm, newdata$gc)
+        expected <- c(
+            "(Intercept)",
+            paste0("subgenome", subgenomes[-1L]),
+            paste0(sd$label, seq_len(ncol(sd$fixed)))
+        )
+        if (!identical(expected, as.character(coef_names))) {
+            stop("unexpected fixed-effect structure in `", part, "`", call. = FALSE)
+        }
+        list(X = cbind(1, dummies, sd$fixed), Z = sd$random)
+    }
+
+    list(
+        cond = build("cond", names(glmmTMB::fixef(fit)$cond)),
+        zi = build("zi", names(glmmTMB::fixef(fit)$zi))
+    )
+}
+
+#' Design matrices taken from glmmTMB's own prediction machinery
+#'
+#' `predict(debug = TRUE)` returns the augmented design matrices, with the
+#' fitting rows first and the prediction rows last. This is the fallback used
+#' when the direct construction above does not recognise the model.
+#'
+#' @noRd
+design_from_tmb <- function(fit, newdata) {
     tmb <- stats::predict(fit, newdata = newdata, debug = TRUE)$data.tmb
     if (is.null(dim(tmb$X))) {
         stop("Fitted model exposes no dense conditional design matrix", call. = FALSE)
@@ -537,7 +604,31 @@ eta_zinb_response <- function(fit, newdata) {
     if (n_aug != nrow(fit$frame) + n_new) {
         stop("Unexpected augmented design size; cannot align predictions", call. = FALSE)
     }
+    idx <- (n_aug - n_new + 1L):n_aug
+    trim <- function(M) {
+        as.matrix(M)[idx, , drop = FALSE]
+    }
+    list(
+        cond = list(X = trim(tmb$X), Z = trim(tmb$Z)),
+        zi = list(X = trim(tmb$Xzi), Z = trim(tmb$Zzi))
+    )
+}
 
+#' Mean response of the fitted ZINB coverage model for new data
+#'
+#' `glmmTMB::predict()` with `newdata` rebuilds the AD function and re-solves the
+#' smooth coefficients on every call, which costs seconds largely independently
+#' of the number of prediction rows. The design matrices alone are enough for a
+#' mean response, so they are built directly here (see `glmmtmb_design()`), and
+#' `predict(debug = TRUE)` is kept as a fallback for unrecognised models.
+#'
+#' The design matrices are built directly when possible and taken from
+#' `predict(debug = TRUE)` otherwise, so the returned values do not depend on
+#' which route was used. Errors are raised (and caught by
+#' `predict_zinb_response()`) when neither route can produce an aligned design.
+#'
+#' @noRd
+eta_zinb_response <- function(fit, newdata) {
     pars <- fit$fit$parfull
     get_par <- function(name) {
         out <- pars[names(pars) == name]
@@ -547,13 +638,20 @@ eta_zinb_response <- function(fit, newdata) {
         out
     }
 
-    eta_cond <- as.numeric(as.matrix(tmb$X) %*% get_par("beta")) +
-        as.numeric(as.matrix(tmb$Z) %*% get_par("b"))
-    eta_zi <- as.numeric(as.matrix(tmb$Xzi) %*% get_par("betazi")) +
-        as.numeric(as.matrix(tmb$Zzi) %*% get_par("bzi"))
+    design <- tryCatch(
+        glmmtmb_design(fit, newdata),
+        error = function(e) NULL
+    )
+    if (is.null(design)) {
+        design <- design_from_tmb(fit, newdata)
+    }
 
-    idx <- (n_aug - n_new + 1L):n_aug
-    (1 - stats::plogis(eta_zi))[idx] * exp(eta_cond)[idx]
+    eta_cond <- as.numeric(design$cond$X %*% get_par("beta")) +
+        as.numeric(design$cond$Z %*% get_par("b"))
+    eta_zi <- as.numeric(design$zi$X %*% get_par("betazi")) +
+        as.numeric(design$zi$Z %*% get_par("bzi"))
+
+    (1 - stats::plogis(eta_zi)) * exp(eta_cond)
 }
 
 #' Expected ZINB coverage at the observed and at a reference GC content

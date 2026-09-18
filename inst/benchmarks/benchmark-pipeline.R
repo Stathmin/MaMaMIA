@@ -294,11 +294,27 @@ predict_detail <- function(rec, fit, dat, gc_ref) {
 # --------------------------------------------------------------- validation --
 
 output_fingerprint <- function(res, cores) {
+    segment_numbers <- res$isa$segments[vapply(
+        res$isa$segments, is.numeric, logical(1L)
+    )]
     c(
         cores = cores,
         n_ideal = sum(res$corrected$data$ideal),
         n_segments = nrow(res$isa$segments),
         n_putative = sum(res$isa$segments$putative_introgression),
+        # Gating values: rounded to 10 significant digits. Rearranging the
+        # arithmetic moves these outputs by up to 1.5e-14 relative (measured for
+        # the direct-vs-glmmTMB design paths on the packaged example), so gating
+        # nearer to the last bit only catches values that happen to straddle a
+        # rounding boundary: the same 1.5e-14 difference flipped one of 35000
+        # values at 12 digits and none at 11. Ten digits leaves three orders of
+        # margin above that noise, and still catches the nearest real signal:
+        # the ~1e-7 relative thread-count dependence of the same fit.
+        r_cor_gc = hash_object(signif(res$corrected$data$cor.gc, 10L)),
+        r_fixef = hash_object(signif(unlist(glmmTMB::fixef(res$corrected$fit)), 10L)),
+        r_segments = hash_object(lapply(segment_numbers, signif, 10L)),
+        # Exact hashes, informational: these change whenever an optimisation
+        # rearranges the arithmetic, even when no value changes appreciably.
         h_cor_gc = hash_object(res$corrected$data$cor.gc),
         h_ideal = hash_object(res$corrected$data$ideal),
         h_outliers = hash_object(res$corrected$outliers),
@@ -307,6 +323,10 @@ output_fingerprint <- function(res, cores) {
         h_bedpe = hash_object(readLines(res$bedpe))
     )
 }
+
+# Keys whose exact hash is reported but which are not allowed to fail --compare
+# on their own: they are gated by their r_ counterpart instead.
+INFORMATIONAL_KEYS <- c("h_cor_gc", "h_fixef", "h_segments")
 
 read_section <- function(path, section) {
     lines <- readLines(path, warn = FALSE)
@@ -508,15 +528,34 @@ main <- function() {
                 " -- was it written by an older version of this script?"
             )
         }
+        missing <- setdiff(names(fp), names(reference))
+        if (length(missing)) {
+            abort(
+                "reference fingerprint predates ", paste(missing, collapse = ", "),
+                "; regenerate it with the current script"
+            )
+        }
         diff <- compare_fingerprints(reference, fp)
+        gating <- !(diff$key %in% INFORMATIONAL_KEYS)
         n_diff <- sum(!diff$match)
+        n_gate <- sum(!diff$match & gating)
+        n_info <- sum(!diff$match & !gating)
         if (n_diff > 0L) {
             print(diff[!diff$match, , drop = FALSE], row.names = FALSE)
         }
+        if (n_info > 0L && n_gate == 0L) {
+            cat(sprintf(
+                "   %d exact hash(es) differ but every value agrees to 10 significant digits\n",
+                n_info
+            ))
+        }
         check(
             rec, "outputs unchanged versus reference fingerprint",
-            n_diff == 0L,
-            sprintf("%d of %d output keys differ", n_diff, nrow(diff))
+            n_gate == 0L,
+            sprintf(
+                "%d of %d gating keys differ, %d arithmetic-only",
+                n_gate, sum(gating), n_info
+            )
         )
     }
 

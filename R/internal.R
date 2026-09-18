@@ -515,6 +515,110 @@ reverse_paired_side <- function(df, chr_id_side, target_ids, value_cols) {
     df
 }
 
+#' Content hash of an R object, used as a cache key
+#' @noRd
+hash_object <- function(x) {
+    path <- tempfile()
+    on.exit(unlink(path), add = TRUE)
+    saveRDS(x, path, version = 2)
+    unname(tools::md5sum(path))
+}
+
+#' The coverage model, as a call
+#'
+#' Returning the call rather than re-typing the model lets the fit and its cache
+#' key share one source: a formula change cannot then be forgotten in the key.
+#' `cores` is substituted in, so `data` is the only symbol left to bind where the
+#' call is evaluated.
+#' @noRd
+coverage_model_call <- function(cores) {
+    substitute(
+        glmmTMB::glmmTMB(
+            cov ~ s(gc, k = 10) + subgenome,
+            ziformula = ~ s(gc, k = 10) + subgenome,
+            family = glmmTMB::nbinom2(),
+            data = ideal_data,
+            REML = TRUE,
+            control = glmmTMB::glmmTMBControl(parallel = list(n = Cores))
+        ),
+        list(Cores = cores)
+    )
+}
+
+#' Cache key for a fitted coverage model
+#'
+#' Covers everything the fit depends on: the windows it was fitted on, the model
+#' itself, the thread count (which perturbs the fit at the 1e-7 level) and the
+#' versions that determine the numbers. The model is part of the key because a
+#' change to it would otherwise be served a stale fit whenever the package
+#' version has not moved, which is the normal case during development.
+#' @noRd
+fit_cache_key <- function(ideal_data, cores, model_call) {
+    spec <- as.list(model_call)
+    spec$data <- NULL
+    hash_object(list(
+        model = paste(deparse(as.call(spec)), collapse = " "),
+        chr_id = as.character(ideal_data$chr_id),
+        iid = as.integer(ideal_data$iid),
+        cov = as.numeric(ideal_data$cov),
+        gc = as.numeric(ideal_data$gc),
+        subgenome = as.character(ideal_data$subgenome),
+        cores = as.integer(cores),
+        package_version = as.character(utils::packageVersion("MaMaMIA")),
+        glmmTMB_version = as.character(utils::packageVersion("glmmTMB")),
+        R_version = as.character(getRversion())
+    ))
+}
+
+#' Layout version of a cached fit entry
+#'
+#' Bumped whenever the entry written by `write_cached_fit()` changes shape. This is
+#' not the R serialization version: it answers "can this code read this file at
+#' all?", where the key answers "is this the right fit for these inputs?". A file
+#' left by an older layout is refused rather than misread.
+#' @noRd
+CACHE_LAYOUT_VERSION <- 1L
+
+#' @noRd
+read_cached_fit <- function(cache, key) {
+    if (is.null(cache) || !file.exists(cache)) {
+        return(NULL)
+    }
+    cached <- tryCatch(readRDS(cache), error = function(e) NULL)
+    if (!is.list(cached) ||
+        !identical(cached$format, CACHE_LAYOUT_VERSION) ||
+        !identical(cached$key, key)) {
+        return(NULL)
+    }
+    cached$fit
+}
+
+#' @noRd
+write_cached_fit <- function(cache, key, fit) {
+    if (is.null(cache)) {
+        return(invisible(NULL))
+    }
+    dir <- dirname(cache)
+    if (!dir.exists(dir)) {
+        dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+    }
+    tmp <- paste0(cache, ".tmp")
+    written <- tryCatch(
+        {
+            saveRDS(
+                list(format = CACHE_LAYOUT_VERSION, key = key, fit = fit),
+                tmp,
+                version = 2
+            )
+            TRUE
+        },
+        error = function(e) FALSE
+    )
+    if (written) {
+        file.rename(tmp, cache)
+    }
+    invisible(NULL)
+}
 
 #' Fixed and random design columns of a stored mgcv smooth for new values
 #'

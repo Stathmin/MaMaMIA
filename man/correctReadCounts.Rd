@@ -2,7 +2,7 @@
 \alias{correctReadCounts}
 \title{Correct read counts for GC-content bias}
 \usage{
-correctReadCounts(RCA, cores = 1L, verbose = TRUE)
+correctReadCounts(RCA, cores = 1L, verbose = TRUE, cache = NULL)
 }
 \arguments{
 \item{RCA}{An object of class \code{RCA}, as returned by \code{RCA()}.}
@@ -14,6 +14,13 @@ Fitted values differ by around \code{1e-7} relative with \code{cores}, so fix
 it for reproducible output.}
 
 \item{verbose}{Logical; if \code{TRUE} (default), print progress messages.}
+
+\item{cache}{Optional path to an \code{.rds} file in which to memoise the fitted
+model (default \code{NULL}, no caching). The cache is keyed on the fitted
+windows, the model specification, \code{cores} and the R, package and
+\code{glmmTMB} versions, so a stale or mismatched entry is refitted rather than
+reused; so is an entry file written by an incompatible layout. Reusing a fit
+skips the model fitting, which dominates the call.}
 }
 \value{
 The input \code{RCA} object with:

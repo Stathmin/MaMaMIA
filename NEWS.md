@@ -11,6 +11,10 @@
   packaged `triticum` example. Corrected coverage agrees with the previous
   implementation to ~1e-14 relative. The remaining cost is the `glmmTMB` fit
   (~28 s at `cores = 4`).
+* A new `cache` argument memoises that fit to an `.rds` file, keyed on the
+  fitted windows, the model specification, `cores` and the R, package and
+  `glmmTMB` versions, so repeated calls on the same windows reuse it (~16x
+  faster in the example).
 
 ## Reproducibility
 

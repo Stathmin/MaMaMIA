@@ -42,6 +42,27 @@ test_that("correctReadCounts() validates its input", {
     expect_error(correctReadCounts(list()), "not RCA")
 })
 
+test_that("a cached fit is reused and returns identical results", {
+    skip_on_cran()
+
+    x <- do.call(RCA, triticum_one_pair())
+    path <- tempfile(fileext = ".rds")
+    on.exit(unlink(path), add = TRUE)
+
+    cold <- correctReadCounts(x, cores = 1L, verbose = FALSE, cache = path)
+    expect_true(file.exists(path))
+
+    warm <- correctReadCounts(x, cores = 1L, verbose = FALSE, cache = path)
+    expect_identical(warm$data$cor.gc, cold$data$cor.gc)
+    expect_identical(warm$data$ideal, cold$data$ideal)
+    expect_identical(glmmTMB::fixef(warm$fit), glmmTMB::fixef(cold$fit))
+
+    # A stale entry is not reused: the fitting data changed.
+    reversed <- reverseWindows(x, chr_ids = unique(x$data$chr_id)[1L])
+    refitted <- correctReadCounts(reversed, cores = 1L, verbose = FALSE, cache = path)
+    expect_true(refitted$corrected)
+})
+
 test_that("the fast ZINB prediction reproduces glmmTMB::predict()", {
     skip_on_cran()
 

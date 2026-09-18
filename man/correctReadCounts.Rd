@@ -9,7 +9,9 @@ correctReadCounts(RCA, cores = 1L, verbose = TRUE)
 
 \item{cores}{Number of cores used for zero-inflated negative binomial model
 fitting via \code{glmmTMB} parallel control (default \code{1L}). Values
-outside \code{1} to the number of detected cores fall back to \code{1L}.}
+outside \code{1} to the number of detected cores fall back to \code{1L}.
+Fitted values differ by around \code{1e-7} relative with \code{cores}, so fix
+it for reproducible output.}
 
 \item{verbose}{Logical; if \code{TRUE} (default), print progress messages.}
 }
@@ -55,6 +57,14 @@ Correction procedure:
 Stops with an error if fewer than 2 valid windows remain, if fewer than 10
 ideal windows remain before model fitting, or if no ideal windows remain
 after the post-correction coverage filter.
+
+Resource use: fitting differentiates the likelihood for every window it uses,
+so runtime and peak memory are linear in the number of fitted windows and
+independent of \code{cores}; budget roughly 0.1 MB per window. The thread count
+does perturb fitted values at the \code{1e-7} level, so fix \code{cores} for
+reproducible output, and run one process per sample for a batch. See
+\code{vignette("Overview", package = "MaMaMIA")} for measured figures and the
+practical ceiling on dataset size.
 }
 \examples{
 data(triticum)

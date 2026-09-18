@@ -518,12 +518,10 @@ reverse_paired_side <- function(df, chr_id_side, target_ids, value_cols) {
 
 #' Fixed and random design columns of a stored mgcv smooth for new values
 #'
-#' glmmTMB turns an `s()` term into one unpenalised fixed column plus a set of
-#' penalised random-effect columns by calling `mgcv::smooth2random(type = 2)`.
-#' That split is a linear map of the evaluated basis which depends only on the
-#' stored smooth (its penalty, rank and df), so the same map can be applied to
-#' basis rows evaluated at new values. Reproducing it here avoids rebuilding the
-#' AD function just to obtain the design matrices.
+#' glmmTMB splits an `s()` term into one unpenalised fixed column and a set of
+#' penalised random-effect columns via `mgcv::smooth2random(type = 2)`. That
+#' split depends only on the stored smooth (its penalty, rank and df), so it can
+#' be applied to basis rows evaluated at new values, avoiding an AD rebuild.
 #'
 #' @noRd
 smooth_design <- function(sm, gc) {
@@ -550,9 +548,9 @@ smooth_design <- function(sm, gc) {
 
 #' Fixed and random design matrices for the fitted coverage model
 #'
-#' Colours are checked against the fitted coefficients, so an unexpected model
-#' structure raises an error instead of silently returning wrong numbers; the
-#' caller falls back to the generic glmmTMB path in that case.
+#' Column names are checked against the fitted coefficients, so an unexpected
+#' model structure raises an error instead of silently returning wrong numbers;
+#' the caller falls back to the generic glmmTMB path in that case.
 #'
 #' @noRd
 glmmtmb_design <- function(fit, newdata) {
@@ -619,13 +617,8 @@ design_from_tmb <- function(fit, newdata) {
 #' `glmmTMB::predict()` with `newdata` rebuilds the AD function and re-solves the
 #' smooth coefficients on every call, which costs seconds largely independently
 #' of the number of prediction rows. The design matrices alone are enough for a
-#' mean response, so they are built directly here (see `glmmtmb_design()`), and
-#' `predict(debug = TRUE)` is kept as a fallback for unrecognised models.
-#'
-#' The design matrices are built directly when possible and taken from
-#' `predict(debug = TRUE)` otherwise, so the returned values do not depend on
-#' which route was used. Errors are raised (and caught by
-#' `predict_zinb_response()`) when neither route can produce an aligned design.
+#' mean response, so they are built directly here (see `glmmtmb_design()`), with
+#' `predict(debug = TRUE)` as a fallback for unrecognised models.
 #'
 #' @noRd
 eta_zinb_response <- function(fit, newdata) {
@@ -659,10 +652,8 @@ eta_zinb_response <- function(fit, newdata) {
 #' Evaluates the fitted model once for every distinct (GC, subgenome) pair plus
 #' the reference-GC rows, then maps the results back to the input windows.
 #' Predictions for the reference GC depend only on the subgenome, so the extra
-#' rows are just one per subgenome.
-#'
-#' Falls back to `glmmTMB::predict()` if the fast path is unavailable, so the
-#' returned values match the previous implementation up to floating point noise.
+#' rows are just one per subgenome. Falls back to `glmmTMB::predict()` if the
+#' fast path is unavailable.
 #'
 #' @noRd
 predict_zinb_response <- function(fit, gc, subgenome, gc_ref) {

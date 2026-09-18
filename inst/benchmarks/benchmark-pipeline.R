@@ -2,42 +2,29 @@
 
 # Benchmark and consistency harness for the MaMaMIA pipeline.
 #
-# Measures wall time, peak R heap and peak resident memory for every step of the
-# documented workflow on the packaged `triticum` example, including a piecewise
-# breakdown of correctReadCounts(), which dominates the runtime.
-#
-# It also checks that the optimised internals still return the same results:
+# Times and memory-profiles every step of the documented workflow on the packaged
+# `triticum` example, with a piecewise breakdown of correctReadCounts(), which
+# dominates the runtime. It also checks that the internals still agree:
 #
 #   1. the fast ZINB prediction reproduces glmmTMB::predict() on the same fit
-#   2. correctReadCounts() is repeatable, and the piecewise sum of its internals
-#      matches the whole-call time (catches unmeasured overhead)
+#   2. correctReadCounts() is repeatable and its internals sum to the whole call
 #   3. segments() is reproducible and leaves the caller's RNG stream untouched
 #   4. writeToBedpe() is byte-stable
 #   5. with --repeat=N the whole pipeline produces identical fingerprints
 #
-# Outputs, written to --out (default "bench-out"):
-#   RESULTS.csv       one row per measured step
-#   FINGERPRINT.txt   environment, hashes of the outputs, and check results
-#
-# Use --compare=<previous FINGERPRINT.txt> to diff against an earlier run. That
-# is the check that an optimisation did not change any output: re-run the
-# harness after the change and diff the fingerprints.
+# Outputs in --out (default "bench-out"): RESULTS.csv (one row per step) and
+# FINGERPRINT.txt (environment, output hashes, check results). --compare=<old
+# FINGERPRINT.txt> asserts that a change altered no output.
 #
 # Usage:
-#   Rscript inst/benchmarks/benchmark-pipeline.R
-#   Rscript inst/benchmarks/benchmark-pipeline.R --cores=8 --repeat=2
+#   Rscript inst/benchmarks/benchmark-pipeline.R [--cores=8] [--repeat=2]
 #   Rscript inst/benchmarks/benchmark-pipeline.R --compare=bench-out/FINGERPRINT.txt
 #
-# Exits with status 1 if a consistency check fails, so it can gate CI.
+# Exits 1 if a check fails, so it can gate CI.
 #
-# Reading the memory columns: peak_rss_MB is the growth of the process resident
-# high-water mark during a step, so it is 0 whenever the step stayed below an
-# earlier peak, and vmhwm_MB is that mark once the step is done. To compare the
-# peak of two individual steps, run them in separate processes.
-#
-# NOTE: glmmTMB accumulates the likelihood with a thread-count-dependent parallel
-# reduction, so fitted values shift by roughly 1e-7 relative with --cores.
-# Fingerprints are therefore only comparable at the same --cores.
+# NOTE: glmmTMB reduces the likelihood in a thread-count-dependent order, so
+# fitted values shift by ~1e-7 relative with --cores, and fingerprints are only
+# comparable at the same --cores.
 
 # ---------------------------------------------------------------- utilities --
 
@@ -112,14 +99,13 @@ record <- function(rec, section, step, elapsed_s, peak_MB, peak_rss_MB, vmhwm_MB
 
 # Run `expr`, recording time and memory, and return its value.
 #
-# Memory is reported three ways, because each alone is misleading:
-#   peak_heap_MB  peak R heap during the step (gc() max used)
-#   peak_rss_MB   growth of the kernel resident high-water mark during the step
-#   vmhwm_MB      that high-water mark once the step is done (absolute)
-# The growth is 0 for any step that did not exceed an earlier peak, so the
-# absolute column is what makes the numbers comparable across steps. Compiled
-# code such as the glmmTMB fit allocates outside R's heap, which is why the R
-# heap peak alone understates it.
+# Memory is reported three ways, because each alone is misleading: peak_heap_MB
+# is the peak R heap during the step (gc() max used), peak_rss_MB the growth of
+# the kernel resident high-water mark, and vmhwm_MB that mark once the step is
+# done. The growth is 0 whenever the step stayed below an earlier peak, so only
+# the absolute column is comparable across steps; and compiled code such as the
+# glmmTMB fit allocates outside R's heap, which is why that peak alone
+# understates it.
 bench <- function(rec, section, step, expr, size = TRUE) {
     hwm_before <- read_vm("VmHWM")
     gc(reset = TRUE)
@@ -304,12 +290,10 @@ output_fingerprint <- function(res, cores) {
         n_putative = sum(res$isa$segments$putative_introgression),
         # Gating values: rounded to 10 significant digits. Rearranging the
         # arithmetic moves these outputs by up to 1.5e-14 relative (measured for
-        # the direct-vs-glmmTMB design paths on the packaged example), so gating
-        # nearer to the last bit only catches values that happen to straddle a
-        # rounding boundary: the same 1.5e-14 difference flipped one of 35000
-        # values at 12 digits and none at 11. Ten digits leaves three orders of
-        # margin above that noise, and still catches the nearest real signal:
-        # the ~1e-7 relative thread-count dependence of the same fit.
+        # the direct-vs-glmmTMB design paths), so gating nearer the last bit only
+        # catches values straddling a rounding boundary: that difference flipped
+        # one of 35000 values at 12 digits and none at 11. Ten digits still
+        # catches the nearest real signal, the ~1e-7 thread dependence.
         r_cor_gc = hash_object(signif(res$corrected$data$cor.gc, 10L)),
         r_fixef = hash_object(signif(unlist(glmmTMB::fixef(res$corrected$fit)), 10L)),
         r_segments = hash_object(lapply(segment_numbers, signif, 10L)),

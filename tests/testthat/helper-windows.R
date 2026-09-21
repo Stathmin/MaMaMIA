@@ -1,10 +1,3 @@
-# Shared fixtures for the test suite.
-#
-# Everything here is deliberately tiny and free of model fitting so the default
-# test run stays fast enough for CRAN. The expensive glmmTMB paths are exercised
-# separately in test-correction.R under skip_on_cran().
-
-# Contiguous half-open windows covering one chromosome.
 make_windows <- function(chr, n, value, width = 100) {
     start <- seq(0, by = width, length.out = n)
     data.frame(
@@ -19,7 +12,6 @@ make_meta <- function(chr_id, chr_name, subgenome) {
     data.frame(chr_id = chr_id, chr_name = chr_name, subgenome = subgenome)
 }
 
-# Windowed tables for two donor and two recipient chromosomes.
 small_inputs <- function(n = 40L) {
     cov <- rep(10, n)
     gc <- seq(0.3, 0.6, length.out = n)
@@ -40,10 +32,6 @@ small_rca <- function(n = 40L) {
     do.call(RCA, small_inputs(n))
 }
 
-# A single donor/recipient pair in which the donor gains coverage over the second
-# half of the chromosome, so CBS has one obvious change point to find. The donor
-# profile is deliberately not constant: it is asymmetric, so reversing the
-# chromosome visibly changes the difference profile.
 step_inputs <- function(n = 60L) {
     donor_cov <- rep(8, n)
     donor_cov[31:n] <- 16
@@ -58,8 +46,6 @@ step_inputs <- function(n = 60L) {
     )
 }
 
-# An RCA object flagged as GC-corrected without fitting a model, mirroring the
-# shortcut used in the package vignette's segmentation examples.
 step_rca <- function(n = 60L) {
     x <- do.call(RCA, step_inputs(n))
     x$data$valid <- TRUE
@@ -74,9 +60,6 @@ step_rca <- function(n = 60L) {
     x
 }
 
-# One donor and one recipient chromosome taken from the packaged example data,
-# used by the tests that need a well-posed model fit. The packaged tables carry
-# positional column names (V1, V2, ...), so they are selected by position.
 triticum_one_pair <- function() {
     utils::data("triticum", package = "MaMaMIA", envir = environment())
 
@@ -91,13 +74,19 @@ triticum_one_pair <- function() {
     keep <- c(don_id, rec_id)
 
     list(
-        dcov = pick(don_cov, don_id, "cov"),
-        dgc = pick(don_gc, don_id, "gc"),
-        rcov = pick(rec_cov, rec_id, "cov"),
-        rgc = pick(rec_gc, rec_id, "gc"),
-        meta = stats::setNames(
-            meta[meta[[1L]] %in% keep, , drop = FALSE],
-            c("chr_id", "chr_name", "subgenome")
-        )
+        dcov = pick(don_cov, don_id, "cov"), dgc = pick(don_gc, don_id, "gc"),
+        rcov = pick(rec_cov, rec_id, "cov"), rgc = pick(rec_gc, rec_id, "gc"),
+        meta = stats::setNames(meta[meta[[1L]] %in% keep, , drop = FALSE], c("chr_id", "chr_name", "subgenome"))
     )
 }
+
+triticum_fit <- local({
+    cache <- NULL
+    function() {
+        if (is.null(cache)) cache <<- correctReadCounts(do.call(RCA, triticum_one_pair()), cores = 1L, verbose = FALSE)
+        cache
+    }
+})
+
+tp <- c(d1 = "r1")
+seg_step <- function(...) segments(step_rca(), target_pairs = tp, verbose = FALSE, ...)

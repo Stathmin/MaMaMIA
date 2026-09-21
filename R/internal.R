@@ -78,13 +78,7 @@ annotate_segment_coords <- function(segments, out) {
         )
 }
 
-#' Run an expression under a fixed RNG seed
-#'
-#' CBS derives permutation-based p-values, so `DNAcopy::segment()` is stochastic:
-#' repeated calls on the same data can return different segment counts. Seeding
-#' here makes segmentation reproducible, and the caller's RNG state is restored
-#' afterwards so the surrounding session is unaffected.
-#'
+#' Run code under a fixed seed, then restore the caller's RNG state.
 #' @noRd
 with_local_seed <- function(seed, code) {
     has_state <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
@@ -515,7 +509,6 @@ reverse_paired_side <- function(df, chr_id_side, target_ids, value_cols) {
     df
 }
 
-#' Content hash of an R object, used as a cache key
 #' @noRd
 hash_object <- function(x) {
     path <- tempfile()
@@ -524,12 +517,7 @@ hash_object <- function(x) {
     unname(tools::md5sum(path))
 }
 
-#' The coverage model, as a call
-#'
-#' Returning the call rather than re-typing the model lets the fit and its cache
-#' key share one source: a formula change cannot then be forgotten in the key.
-#' `cores` is substituted in, so `data` is the only symbol left to bind where the
-#' call is evaluated.
+#' Coverage-model call shared by fitting and cache-keying.
 #' @noRd
 coverage_model_call <- function(cores) {
     substitute(
@@ -545,13 +533,7 @@ coverage_model_call <- function(cores) {
     )
 }
 
-#' Cache key for a fitted coverage model
-#'
-#' Covers everything the fit depends on: the windows it was fitted on, the model
-#' itself, the thread count (which perturbs the fit at the 1e-7 level) and the
-#' versions that determine the numbers. The model is part of the key because a
-#' change to it would otherwise be served a stale fit whenever the package
-#' version has not moved, which is the normal case during development.
+#' Cache key for a fitted coverage model.
 #' @noRd
 fit_cache_key <- function(ideal_data, cores, model_call) {
     spec <- as.list(model_call)
@@ -570,12 +552,7 @@ fit_cache_key <- function(ideal_data, cores, model_call) {
     ))
 }
 
-#' Layout version of a cached fit entry
-#'
-#' Bumped whenever the entry written by `write_cached_fit()` changes shape. This is
-#' not the R serialization version: it answers "can this code read this file at
-#' all?", where the key answers "is this the right fit for these inputs?". A file
-#' left by an older layout is refused rather than misread.
+#' Cached-fit entry layout version.
 #' @noRd
 CACHE_LAYOUT_VERSION <- 1L
 
@@ -620,13 +597,7 @@ write_cached_fit <- function(cache, key, fit) {
     invisible(NULL)
 }
 
-#' Fixed and random design columns of a stored mgcv smooth for new values
-#'
-#' glmmTMB splits an `s()` term into one unpenalised fixed column and a set of
-#' penalised random-effect columns via `mgcv::smooth2random(type = 2)`. That
-#' split depends only on the stored smooth (its penalty, rank and df), so it can
-#' be applied to basis rows evaluated at new values, avoiding an AD rebuild.
-#'
+#' Fixed/random design columns of a stored mgcv smooth for new values.
 #' @noRd
 smooth_design <- function(sm, gc) {
     ev <- eigen(sm$S[[1L]], symmetric = TRUE)
@@ -650,12 +621,7 @@ smooth_design <- function(sm, gc) {
     )
 }
 
-#' Fixed and random design matrices for the fitted coverage model
-#'
-#' Column names are checked against the fitted coefficients, so an unexpected
-#' model structure raises an error instead of silently returning wrong numbers;
-#' the caller falls back to the generic glmmTMB path in that case.
-#'
+#' Fixed/random design matrices for the fitted coverage model.
 #' @noRd
 glmmtmb_design <- function(fit, newdata) {
     subgenomes <- levels(factor(fit$frame$subgenome))
@@ -689,12 +655,7 @@ glmmtmb_design <- function(fit, newdata) {
     )
 }
 
-#' Design matrices taken from glmmTMB's own prediction machinery
-#'
-#' `predict(debug = TRUE)` returns the augmented design matrices, with the
-#' fitting rows first and the prediction rows last. This is the fallback used
-#' when the direct construction above does not recognise the model.
-#'
+#' Design matrices from glmmTMB's prediction machinery.
 #' @noRd
 design_from_tmb <- function(fit, newdata) {
     tmb <- stats::predict(fit, newdata = newdata, debug = TRUE)$data.tmb
@@ -716,14 +677,7 @@ design_from_tmb <- function(fit, newdata) {
     )
 }
 
-#' Mean response of the fitted ZINB coverage model for new data
-#'
-#' `glmmTMB::predict()` with `newdata` rebuilds the AD function and re-solves the
-#' smooth coefficients on every call, which costs seconds largely independently
-#' of the number of prediction rows. The design matrices alone are enough for a
-#' mean response, so they are built directly here (see `glmmtmb_design()`), with
-#' `predict(debug = TRUE)` as a fallback for unrecognised models.
-#'
+#' Mean response of the fitted ZINB coverage model for new data.
 #' @noRd
 eta_zinb_response <- function(fit, newdata) {
     pars <- fit$fit$parfull
@@ -751,14 +705,7 @@ eta_zinb_response <- function(fit, newdata) {
     (1 - stats::plogis(eta_zi)) * exp(eta_cond)
 }
 
-#' Expected ZINB coverage at the observed and at a reference GC content
-#'
-#' Evaluates the fitted model once for every distinct (GC, subgenome) pair plus
-#' the reference-GC rows, then maps the results back to the input windows.
-#' Predictions for the reference GC depend only on the subgenome, so the extra
-#' rows are just one per subgenome. Falls back to `glmmTMB::predict()` if the
-#' fast path is unavailable.
-#'
+#' Expected ZINB coverage at observed GC and at reference GC.
 #' @noRd
 predict_zinb_response <- function(fit, gc, subgenome, gc_ref) {
     n <- length(gc)

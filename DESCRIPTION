@@ -23,8 +23,15 @@ Imports:
 Depends: 
     R (>= 4.6.0)
 Suggests: 
+    BioCircos,
+    bslib,
+    DT,
+    htmltools,
+    htmlwidgets,
     knitr (>= 1.51),
     rmarkdown (>= 2.31),
+    shiny,
+    shinyWidgets,
     testthat (>= 3.0.0)
 biocViews:
     StructuralVariation,

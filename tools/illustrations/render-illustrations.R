@@ -67,7 +67,7 @@ fig_mechanism <- function(i = 1L) {
     o <- pair_out(i); s <- pair_seg(i); call <- s[s$putative_introgression, , drop = FALSE]
     xr <- range(o$iid); lo <- min(call$loc.start); hi <- max(call$loc.end)
     arrow_df <- data.frame(xmin = c(xr[1], lo), xmax = c(xr[2], hi), y = 1, forward = TRUE, type = c("recipient background", "introgressed segment"))
-    schema <- ggplot(arrow_df, aes(.data$xmin, xmax = .data$xmax, y = .data$y, forward = .data$forward, fill = .data$type)) +
+    schema <- ggplot(arrow_df, aes(xmin = .data$xmin, xmax = .data$xmax, y = .data$y, forward = .data$forward, fill = .data$type)) +
         geom_gene_arrow(arrowhead_height = unit(7, "mm"), arrowhead_width = unit(7, "mm")) +
         scale_fill_manual(NULL, values = c("recipient background" = "grey85", "introgressed segment" = PAL[["don"]])) +
         annotate("text", x = xr[1] + diff(xr) * 0.30, y = 1, label = "recipient background", size = 3, colour = "grey25") +
